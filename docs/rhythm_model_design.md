@@ -131,3 +131,28 @@
 3. 条件：最小集（星级/CS/AR/OD/HP/年份/拍长）之外，要不要加局部密度、谱师 ID、标签？
 4. 首次服务器训练的数据规模：8 分片（1.5 万张）还是全量 74 分片（13 万张）？
 5. 音频特征：纯 mel，还是 mel + 显式鼓/旋律通道？
+
+## 10. 产品化 v0.1（2026-09-16）
+
+用户玩过四首歌的合成谱面后判定"达到基本要求"，转入产品化：中英双语 GUI、exe、开源。同日发现的缺陷：
+Run It 有 12 条滑条路径出界（最多 140 像素）——原因是 `--max-stretch 1000` 只按长度放大锚点、不检查边界。
+
+**坐标推理搬进 autoosu**（`autoosu/ml/coord_infer.py`，不再依赖 Mapperatorinator 的 venv）：
+按训练数据格式自己构造 token 序列（16 类：圈 / 新 combo 圈 / 转盘头尾 / 滑条头 / 贝塞尔·圆弧·红锚点 / 末锚点 / 5 种重复数的滑条尾），
+上下文 = 时间正弦嵌入 + 距离置零嵌入 + 类别 one-hot（272 维）；1024 长窗口、128 重叠、±128 带状注意力；
+去噪过程中每步按当前锚点重算滑条尾坐标（与训练一致）；cfg=1 时不再复制批次，算力减半。
+模型文件改为 `weights_only=True` 可加载的 fp16 单文件：`models/coord_v0.pt`（261 MB）、`models/rhythm_v0.pt`（57 MB）。
+
+**滑条贴合**（`autoosu/sliderpath.py`）：自己实现 L/P/B/C 路径采样与长度；`fit_slider` 围绕滑条头缩放到要求长度，
+出界则依次尝试镜像弯向、绕头旋转（小角度优先），都不行才取最大可容纳尺度并对该滑条加本地绿线降 SV（时长不变）。
+整数化后再迭代 4 次修正长度（扁圆弧对取整极敏感）。四首歌重新贴合后路径 0 出界，且全部无需降 SV。
+另外快歌按 `min(1, 180/BPM)`（下限 0.75）压低 SliderMultiplier（`effective_preset`），210 BPM 从 1.4 降到 1.2。
+
+**速度**：Run It（3:12）Hard 一个难度，RTX 4090 16 秒，16 核 CPU 69 秒（100 步扩散）。GUI 提供 50/100/200 步三档。
+
+**GUI**（`autoosu/gui.py` + `autoosu/i18n.py`，customtkinter）：拖放/浏览歌曲、四个难度勾选、输出目录、生成后自动
+`os.startfile(.osz)` 导入 osu!、高级选项（种子/BPM/偏移/谱师名/星级/质量/设备/引擎/试听 mp3）、模型缺失时一键下载
+（`autoosu/models.py`，GitHub Release 资源 + sha256 校验）、设置持久化到 `%APPDATA%\AUTO-OSU\settings.json`。
+`AUTO-OSU.spec` + `scripts/build_exe.ps1` 打 onedir exe（CPU torch 版为默认发布包，模型放在 exe 旁 `models/`）。
+
+**仍未解决 / v1**：坐标模型不知道滑条要求长度（形状对、尺度靠贴合）；节奏模型无谱师风格条件；单红线。
