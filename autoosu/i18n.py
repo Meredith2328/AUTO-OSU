@@ -5,6 +5,7 @@ from typing import Dict
 
 LANGS = ("zh", "en")
 _current = "zh"
+AUTHOR = "kanzei"
 
 STRINGS: Dict[str, Dict[str, str]] = {
     "app.title": {"zh": "AUTO-OSU 自动谱面生成", "en": "AUTO-OSU beatmap generator"},
@@ -49,23 +50,25 @@ STRINGS: Dict[str, Dict[str, str]] = {
     "models.missing": {"zh": "缺少模型文件（约 320 MB），点击下载后才能使用 AI 模式",
                        "en": "Model files missing (~320 MB); download them to use the AI engine"},
     "models.download": {"zh": "下载模型", "en": "Download models"},
-    "models.downloading": {"zh": "正在下载 {name}…", "en": "Downloading {name}…"},
+    "models.downloading": {"zh": "正在下载 {name}…… 少女祈祷中", "en": "Downloading {name}… girls are praying"},
     "models.folder": {"zh": "模型文件夹", "en": "Models folder"},
     "run.generate": {"zh": "生成谱面", "en": "Generate"},
-    "run.running": {"zh": "生成中…", "en": "Generating…"},
+    "run.running": {"zh": "生成中…… 少女祈祷中", "en": "Generating… girls are praying"},
     "run.open_folder": {"zh": "打开输出文件夹", "en": "Open output folder"},
     "run.open_osz": {"zh": "在 osu! 中打开", "en": "Open in osu!"},
-    "status.idle": {"zh": "就绪", "en": "Ready"},
-    "status.load": {"zh": "读取音频…", "en": "Loading audio…"},
-    "status.analyse": {"zh": "分析音频（鼓点、旋律、段落）…", "en": "Analysing audio (drums, melody, sections)…"},
-    "status.timing": {"zh": "估计 BPM 和偏移…", "en": "Estimating BPM and offset…"},
-    "status.load rhythm model": {"zh": "加载节奏模型…", "en": "Loading rhythm model…"},
-    "status.load coordinate model": {"zh": "加载坐标模型…", "en": "Loading coordinate model…"},
-    "status.rhythm": {"zh": "{diff}：生成节奏…", "en": "{diff}: generating rhythm…"},
-    "status.placing": {"zh": "{diff}：摆放物件 {detail}", "en": "{diff}: placing objects {detail}"},
-    "status.package": {"zh": "打包 .osz…", "en": "Packing the .osz…"},
-    "status.done": {"zh": "完成：{file}（{secs:.0f} 秒，{device}）", "en": "Done: {file} ({secs:.0f} s, {device})"},
-    "status.error": {"zh": "出错了：{err}", "en": "Error: {err}"},
+    # progress lines: a little otaku flavour on purpose
+    "status.idle": {"zh": "就绪。把歌丢进来吧，谱面的事交给我", "en": "Ready. Drop a song in, leave the mapping to me"},
+    "status.load": {"zh": "正在读取音频…… 装填完毕、准备出击！", "en": "Loading audio… locked and loaded!"},
+    "status.analyse": {"zh": "分析鼓点和旋律…… 这就是命运石之门的选择", "en": "Analysing drums and melody… this is the choice of Steins;Gate"},
+    "status.timing": {"zh": "计算 BPM 和偏移…… 计划通り", "en": "Working out BPM and offset… just as planned"},
+    "status.load rhythm model": {"zh": "唤醒节奏模型…… 少女祈祷中", "en": "Waking the rhythm model… girls are praying"},
+    "status.load coordinate model": {"zh": "唤醒坐标模型…… 少女折寿中", "en": "Waking the coordinate model… please wait warmly"},
+    "status.rhythm": {"zh": "{diff}：谱写节奏…… 打起精神来！(๑•̀ㅂ•́)و✧", "en": "{diff}: writing the rhythm… ganbatte! (๑•̀ㅂ•́)و✧"},
+    "status.placing": {"zh": "{diff}：摆放物件 {detail}…… 目标是 Full Combo！", "en": "{diff}: placing objects {detail}… aim for the Full Combo!"},
+    "status.package": {"zh": "打包 .osz…… 变身完成！", "en": "Packing the .osz… henshin complete!"},
+    "status.done": {"zh": "完成：{file}（{secs:.0f} 秒，{device}）—— 去 osu! 里冲 SS 吧！",
+                    "en": "Done: {file} ({secs:.0f} s, {device}) — now go get that SS!"},
+    "status.error": {"zh": "出错了：{err} …… 果然还是不行呢 (´；ω；`)", "en": "Error: {err} … it was not meant to be (´；ω；`)"},
     "result.summary": {"zh": "BPM {bpm:g}，{n} 个难度：", "en": "BPM {bpm:g}, {n} difficulties:"},
     "result.diff": {"zh": "  {name}：{objects} 个物件（{sliders} 滑条），{nps:.1f} 个/秒",
                     "en": "  {name}: {objects} objects ({sliders} sliders), {nps:.1f}/s"},
@@ -75,7 +78,7 @@ STRINGS: Dict[str, Dict[str, str]] = {
                       "en": "The AI engine needs the models; download them or switch to rules-only in Advanced"},
     "err.file_missing": {"zh": "文件不存在：{path}", "en": "File not found: {path}"},
     "lang.toggle": {"zh": "English", "en": "中文"},
-    "about": {"zh": "开源项目 · github.com/kanze1/AUTO-OSU", "en": "Open source · github.com/kanze1/AUTO-OSU"},
+    "about": {"zh": "kanzei 出品 · 开源 github.com/kanze1/AUTO-OSU", "en": "Made by kanzei · open source github.com/kanze1/AUTO-OSU"},
 }
 
 

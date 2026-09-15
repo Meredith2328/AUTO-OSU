@@ -17,11 +17,15 @@ from typing import Dict, Optional
 
 from . import __version__
 from .difficulty import PRESETS
-from .i18n import language, set_language, tr
+from .i18n import AUTHOR, language, set_language, tr
 from .models import MODELS, app_root, candidate_dirs, ensure_model, find_model
 
 AUDIO_EXT = ("*.mp3", "*.ogg", "*.wav", "*.flac", "*.m4a", "*.aac", "*.wma", "*.opus")
 QUALITY_STEPS = {"fast": 50, "normal": 100, "high": 200}
+ASSETS = Path(__file__).resolve().parent / "assets"
+AVATAR = ASSETS / "avatar.png"          # kanzei's OC; header avatar + window icon when present
+MUTED = "#9a937f"                       # secondary text on the dark gold theme
+GOLD = "#d4a52c"
 
 
 def settings_path() -> Path:
@@ -65,8 +69,9 @@ def run_gui() -> int:
     except Exception:  # drag and drop is optional
         DND_FILES = TkinterDnD = None
 
-    ctk.set_appearance_mode("system")
-    ctk.set_default_color_theme("blue")
+    ctk.set_appearance_mode("dark")
+    theme = ASSETS / "theme.json"
+    ctk.set_default_color_theme(str(theme) if theme.exists() else "blue")
 
     class App(ctk.CTk):
         def __init__(self) -> None:
@@ -104,13 +109,19 @@ def run_gui() -> int:
 
             head = ctk.CTkFrame(self, fg_color="transparent")
             head.grid(row=0, column=0, sticky="ew", padx=20, pady=(16, 4))
-            head.grid_columnconfigure(0, weight=1)
-            w["title"] = ctk.CTkLabel(head, font=self.font_title, anchor="w")
-            w["title"].grid(row=0, column=0, sticky="w")
-            w["lang"] = ctk.CTkButton(head, width=90, font=self.font, command=self.toggle_language)
-            w["lang"].grid(row=0, column=1, sticky="e")
-            w["subtitle"] = ctk.CTkLabel(head, font=self.font, anchor="w", text_color=("gray30", "gray70"))
-            w["subtitle"].grid(row=1, column=0, columnspan=2, sticky="w")
+            head.grid_columnconfigure(1, weight=1)
+            avatar = _load_avatar(ctk, 60)
+            if avatar is not None:
+                self._avatar = avatar
+                ctk.CTkLabel(head, image=avatar, text="").grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 14))
+            w["title"] = ctk.CTkLabel(head, font=self.font_title, anchor="w", text_color=GOLD)
+            w["title"].grid(row=0, column=1, sticky="w")
+            w["lang"] = ctk.CTkButton(head, width=90, font=self.font, command=self.toggle_language,
+                                      fg_color="transparent", border_width=1, border_color="#5a5030", text_color=GOLD)
+            w["lang"].grid(row=0, column=2, sticky="e")
+            w["subtitle"] = ctk.CTkLabel(head, font=self.font, anchor="w", text_color=MUTED)
+            w["subtitle"].grid(row=1, column=1, columnspan=2, sticky="w")
+            self.after(400, self._set_window_icon)
 
             # song
             song = ctk.CTkFrame(self)
@@ -123,7 +134,7 @@ def run_gui() -> int:
             w["song.entry"].grid(row=1, column=0, sticky="ew", padx=(12, 6), pady=6)
             w["song.browse"] = ctk.CTkButton(song, width=110, font=self.font, command=self.browse_song)
             w["song.browse"].grid(row=1, column=1, padx=(0, 12), pady=6)
-            w["song.hint"] = ctk.CTkLabel(song, font=self.font, anchor="w", text_color=("gray30", "gray70"))
+            w["song.hint"] = ctk.CTkLabel(song, font=self.font, anchor="w", text_color=MUTED)
             w["song.hint"].grid(row=2, column=0, columnspan=2, sticky="w", padx=12, pady=(0, 8))
             if self.dnd_ok:
                 for target in (song, w["song.entry"], w["song.hint"]):
@@ -145,7 +156,7 @@ def run_gui() -> int:
                 self.diff_vars[name] = var
                 w[f"diff.{name}"] = ctk.CTkCheckBox(diff, variable=var, font=self.font)
                 w[f"diff.{name}"].grid(row=1, column=i, sticky="w", padx=12, pady=6)
-            w["diff.hint"] = ctk.CTkLabel(diff, font=self.font, anchor="w", text_color=("gray30", "gray70"))
+            w["diff.hint"] = ctk.CTkLabel(diff, font=self.font, anchor="w", text_color=MUTED)
             w["diff.hint"].grid(row=2, column=0, columnspan=4, sticky="w", padx=12, pady=(0, 8))
 
             # output
@@ -167,7 +178,7 @@ def run_gui() -> int:
 
             # advanced (collapsible)
             w["adv.toggle"] = ctk.CTkButton(self, fg_color="transparent", anchor="w", font=self.font,
-                                            text_color=("gray20", "gray80"), hover=False, command=self.toggle_advanced)
+                                            text_color=GOLD, hover=False, command=self.toggle_advanced)
             w["adv.toggle"].grid(row=4, column=0, sticky="w", padx=20, pady=(4, 0))
             adv = ctk.CTkFrame(self)
             self.adv_frame = adv
@@ -228,23 +239,33 @@ def run_gui() -> int:
             w["run.generate"] = ctk.CTkButton(btns, height=42, width=200, font=self.font_bold, command=self.start)
             w["run.generate"].pack(side="left")
             w["run.open_osz"] = ctk.CTkButton(btns, height=42, font=self.font, fg_color="transparent",
-                                              border_width=1, text_color=("gray10", "gray90"),
+                                              border_width=1, border_color="#5a5030", text_color=GOLD,
                                               command=lambda: self.last_osz and open_path(self.last_osz), state="disabled")
             w["run.open_osz"].pack(side="left", padx=8)
             w["run.open_folder"] = ctk.CTkButton(btns, height=42, font=self.font, fg_color="transparent",
-                                                 border_width=1, text_color=("gray10", "gray90"),
+                                                 border_width=1, border_color="#5a5030", text_color=GOLD,
                                                  command=lambda: open_path(Path(self.out_var.get())))
             w["run.open_folder"].pack(side="left")
             self.log_box = ctk.CTkTextbox(run, font=ctk.CTkFont(family="Consolas", size=12), height=120)
             self.log_box.grid(row=4, column=0, columnspan=2, sticky="nsew", padx=12, pady=(4, 10))
             self.log_box.configure(state="disabled")
 
-            w["about"] = ctk.CTkLabel(self, font=ctk.CTkFont(family=_ui_font(), size=11), text_color=("gray40", "gray60"))
+            w["about"] = ctk.CTkLabel(self, font=ctk.CTkFont(family=_ui_font(), size=11), text_color="#8a8478")
             w["about"].grid(row=7, column=0, sticky="e", padx=24, pady=(0, 8))
+
+        def _set_window_icon(self) -> None:
+            try:
+                from PIL import Image, ImageTk
+
+                if AVATAR.exists():
+                    self._icon_img = ImageTk.PhotoImage(Image.open(AVATAR).convert("RGBA").resize((64, 64), Image.LANCZOS))
+                    self.iconphoto(True, self._icon_img)
+            except Exception:
+                pass
 
         def refresh_texts(self) -> None:
             w = self.widgets
-            self.title(f"AUTO-OSU {__version__}")
+            self.title(f"AUTO-OSU {__version__} · {AUTHOR}")
             w["title"].configure(text=tr("app.title"))
             w["subtitle"].configure(text=tr("app.subtitle"))
             w["lang"].configure(text=tr("lang.toggle"))
@@ -310,10 +331,10 @@ def run_gui() -> int:
             found = self.models_present()
             if all(found.values()):
                 w["models.status"].configure(text=tr("models.ok", rhythm=found["rhythm"].name, coord=found["coord"].name),
-                                             text_color=("gray20", "gray80"))
+                                             text_color="#ece7d8")
                 w["models.download"].grid_remove()
             else:
-                w["models.status"].configure(text=tr("models.missing"), text_color=("#b3541e", "#f0a060"))
+                w["models.status"].configure(text=tr("models.missing"), text_color="#f0a060")
                 w["models.download"].grid()
 
         def download_models(self) -> None:
@@ -482,6 +503,24 @@ def _keys():
     from .i18n import STRINGS
 
     return STRINGS
+
+
+def _load_avatar(ctk, size: int):
+    """Round-cropped CTkImage of assets/avatar.png, or None when the file is absent."""
+    if not AVATAR.exists():
+        return None
+    try:
+        from PIL import Image, ImageDraw
+
+        img = Image.open(AVATAR).convert("RGBA")
+        side = min(img.size)
+        img = img.crop(((img.width - side) // 2, 0, (img.width - side) // 2 + side, side)).resize((size * 4, size * 4), Image.LANCZOS)
+        mask = Image.new("L", img.size, 0)
+        ImageDraw.Draw(mask).ellipse((0, 0, img.width - 1, img.height - 1), fill=255)
+        img.putalpha(mask)
+        return ctk.CTkImage(light_image=img, dark_image=img, size=(size, size))
+    except Exception:
+        return None
 
 
 def _system_is_chinese() -> bool:

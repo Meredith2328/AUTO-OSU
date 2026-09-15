@@ -14,6 +14,7 @@ for pkg in ("customtkinter", "tkinterdnd2", "librosa", "imageio_ffmpeg", "soundf
     binaries += b
     hiddenimports += h
 hiddenimports += collect_submodules("autoosu")
+datas += [("autoosu/assets", "autoosu/assets")]
 hiddenimports += ["scipy.special._cdflib", "scipy._lib.array_api_compat.numpy.fft", "sklearn.utils._typedefs"]
 
 a = Analysis(

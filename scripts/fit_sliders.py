@@ -145,7 +145,7 @@ def main() -> None:
                 if ln.startswith("Creator:"):
                     ln = f"Creator:{a.creator}"
                 elif ln.startswith("Tags:"):
-                    ln = "Tags:autoosu generated"
+                    ln = "Tags:autoosu ai-generated kanzei"
                 if ln.strip():
                     out_lines.append(ln)
         elif sec in ("[General]", "[Events]", "[Colours]"):

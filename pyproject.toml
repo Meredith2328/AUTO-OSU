@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "Turn any song into a playable osu!standard beatmap (.osz) with trained rhythm and placement models"
 readme = "README.md"
 license = {text = "MIT"}
+authors = [{name = "kanzei"}]
 requires-python = ">=3.10"
 keywords = ["osu", "beatmap", "rhythm-game", "music", "deep-learning"]
 dependencies = [
