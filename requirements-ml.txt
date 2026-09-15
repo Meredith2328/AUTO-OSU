@@ -1,0 +1,10 @@
+# server side: pip install -r requirements-ml.txt  (install torch for your CUDA first, e.g.
+#   pip install torch --index-url https://download.pytorch.org/whl/cu130)
+numpy
+scipy
+librosa>=0.10
+soundfile>=0.12
+huggingface_hub
+matplotlib
+wandb
+imageio-ffmpeg

@@ -1,0 +1,74 @@
+# AUTO-OSU coordinate model v0: osu-diffusion DiT trained from scratch on the full noise schedule,
+# conditioned on difficulty + circle size only (no mapper / descriptor / beatmap style classes).
+defaults:
+  - /diffusion/base@_here_
+
+compile: true
+device: gpu
+precision: 'bf16'
+seed: 0
+checkpoint_path: ''
+
+model:
+  model: 'DiT-B'
+  noise_schedule: 'squaredcos_cap_v2'
+  l1_loss: false
+  diffusion_steps: 1000
+  max_diffusion_step: 1000        # full process: the model must generate positions from pure noise
+  context_size: 272
+
+data:
+  train_dataset_path: '/home/p2522808/autoosu/data/ors/'
+  start: 0
+  end: 32000                       # number of Track folders; set after conversion
+  shuffle: true
+  seq_len: 128
+  stride: 16
+  cycle_length: 64
+  beatmap_class: false
+  difficulty_class: true
+  mapper_class: false
+  descriptor_class: false
+  circle_size_class: true
+  class_dropout_prob: 0.2
+  diff_dropout_prob: 0.2
+  mapper_dropout_prob: 0.2
+  descriptor_dropout_prob: 0.2
+  cs_dropout_prob: 0.2
+  descriptors_path: ""
+  mappers_path: ""
+  num_diff_classes: 26
+  max_diff: 12
+  num_cs_classes: 22
+  double_time_prob: 0.5
+  distance_std: 0.1
+  distance_dropout_prob: 0.5      # half the time the model gets no spacing hint
+
+dataloader:
+  num_workers: 8
+
+optim:
+  name: adamw
+  base_lr: 2e-4
+  batch_size: 128                  # global
+  total_steps: 200000
+  warmup_steps: 5000
+  lr_scheduler: cosine
+  weight_decay: 0.0
+  grad_acc: 1
+  grad_clip: 1.0
+  final_cosine: 1e-5
+
+checkpoint:
+  every_steps: 10000
+
+logging:
+  log_with: 'wandb'
+  every_steps: 50
+  mode: 'online'
+
+hydra:
+  job:
+    chdir: True
+  run:
+    dir: ./runs/coord_v0/${now:%Y-%m-%d}_${now:%H-%M-%S}

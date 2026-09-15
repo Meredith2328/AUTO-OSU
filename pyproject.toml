@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "autoosu"
+version = "0.1.0"
+description = "Turn any song into a playable osu!standard beatmap (.osz) with trained rhythm and placement models"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+keywords = ["osu", "beatmap", "rhythm-game", "music", "deep-learning"]
+dependencies = [
+    "numpy",
+    "scipy",
+    "librosa>=0.10",
+    "soundfile>=0.12",
+    "mutagen",
+    "torch>=2.1",
+]
+
+[project.optional-dependencies]
+gui = ["customtkinter>=5.2", "tkinterdnd2", "imageio-ffmpeg"]
+dev = ["pytest", "matplotlib"]
+build = ["pyinstaller>=6", "customtkinter>=5.2", "tkinterdnd2", "imageio-ffmpeg"]
+train = ["huggingface_hub", "wandb", "imageio-ffmpeg", "matplotlib", "accelerate", "slider", "tqdm", "hydra-core"]
+
+[project.urls]
+Homepage = "https://github.com/kanze1/AUTO-OSU"
+Issues = "https://github.com/kanze1/AUTO-OSU/issues"
+
+[project.scripts]
+autoosu = "autoosu.cli:main"
+
+[project.gui-scripts]
+autoosu-gui = "autoosu.gui:run_gui"
+
+[tool.setuptools.packages.find]
+include = ["autoosu*"]
+
+[tool.setuptools.package-data]
+"autoosu.ml.coord" = ["LICENSE"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

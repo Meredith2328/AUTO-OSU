@@ -1,0 +1,228 @@
+"""End-to-end pipeline: audio file -> .osz"""
+from __future__ import annotations
+
+import dataclasses
+import time as _time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
+
+import numpy as np
+
+from .audio import AudioAnalysis, analyze, load_audio
+from .beatmap import Beatmap, Break, HitObject, Slider, Spinner, TimingPoint
+from .difficulty import DifficultyPreset, get_preset
+from .package import prepare_audio, read_metadata, write_osz
+from .placement import place
+from .rhythm import RhythmEvent, Sections, analyse_sections, build_events
+from .timing import Timing, estimate_timing
+
+# osu! convention: ranked beatmaps place hit objects ~26 ms *before* the audio transient as
+# decoded by ffmpeg/librosa (community measurement, and what Mapperatorinator reproduces).
+# Players calibrate their offsets against ranked maps, so we follow the same convention.
+OSU_TIMING_SHIFT_MS = 26
+
+ProgressFn = Callable[[float, str], None]
+SvOverride = Tuple[int, int, float]          # start ms, end ms, slider velocity multiplier
+
+
+@dataclass
+class DiffResult:
+    preset: DifficultyPreset
+    events: List[RhythmEvent]
+    beatmap: Beatmap
+
+    def summary(self) -> Dict[str, float]:
+        objs = self.beatmap.hit_objects
+        n = len(objs)
+        sliders = sum(isinstance(o, Slider) for o in objs)
+        spinners = sum(isinstance(o, Spinner) for o in objs)
+        span = (objs[-1].end_time - objs[0].time) / 1000.0 if n > 1 else 1.0
+        return {"objects": n, "circles": n - sliders - spinners, "sliders": sliders,
+                "spinners": spinners, "nps": round(n / max(span, 1e-6), 2),
+                "length_s": round(span, 1)}
+
+
+@dataclass
+class GenerateResult:
+    osz: Path
+    audio_file: Path
+    timing: Timing
+    analysis: AudioAnalysis
+    diffs: List[DiffResult] = field(default_factory=list)
+    elapsed_s: float = 0.0
+    osu_shift_ms: int = OSU_TIMING_SHIFT_MS
+    device: str = "cpu"
+
+
+def approach_ms(ar: float) -> float:
+    return 1200 + 600 * (5 - ar) / 5 if ar < 5 else 1200 - 750 * (ar - 5) / 5
+
+
+def compute_breaks(objects: List[HitObject], ar: float, min_gap_ms: int = 5000) -> List[Break]:
+    breaks: List[Break] = []
+    pre = int(approach_ms(ar))
+    for prev, nxt in zip(objects, objects[1:]):
+        if nxt.time - prev.end_time >= min_gap_ms:
+            breaks.append(Break(prev.end_time + 200, nxt.time - pre))
+    return breaks
+
+
+def apply_shift(objects: List[HitObject], shift_ms: int) -> None:
+    """Move every object earlier by shift_ms (in place)."""
+    for o in objects:
+        o.time -= shift_ms
+        if isinstance(o, Spinner):
+            o.end -= shift_ms
+
+
+def effective_preset(preset: DifficultyPreset, timing: Timing) -> DifficultyPreset:
+    """Scale the slider velocity down on fast songs so sliders keep a sane pixel length."""
+    factor = float(np.clip(180.0 / timing.bpm, 0.75, 1.0))
+    sm = round(preset.slider_multiplier * factor * 20) / 20
+    return dataclasses.replace(preset, slider_multiplier=sm) if sm != preset.slider_multiplier else preset
+
+
+def build_beatmap(preset: DifficultyPreset, timing: Timing, objects: List[HitObject],
+                  kiai: List[tuple], audio_filename: str, title: str, artist: str,
+                  creator: str, shift_ms: int = OSU_TIMING_SHIFT_MS,
+                  sv_overrides: Sequence[SvOverride] = ()) -> Beatmap:
+    apply_shift(objects, shift_ms)
+    tps = [TimingPoint(int(round(timing.offset_ms)) - shift_ms, timing.beat_length, uninherited=True)]
+    for start, end in kiai:
+        tps.append(TimingPoint(start - shift_ms, -100.0 / preset.kiai_sv, uninherited=False, kiai=True))
+        tps.append(TimingPoint(end - shift_ms, -100.0, uninherited=False, kiai=False))
+
+    def state_at(t: int) -> Tuple[float, bool]:
+        sv, k = 1.0, False
+        for a, b in kiai:
+            if a <= t < b:
+                sv, k = preset.kiai_sv, True
+        return sv, k
+
+    for start, end, scale in sv_overrides:      # sliders that had to be shortened to fit the screen
+        sv, k = state_at(start)
+        tps.append(TimingPoint(start - shift_ms, -100.0 / (sv * scale), uninherited=False, kiai=k))
+        sv2, k2 = state_at(end)
+        tps.append(TimingPoint(end - shift_ms, -100.0 / sv2, uninherited=False, kiai=k2))
+    preview = (kiai[0][0] - shift_ms) if kiai else (objects[len(objects) * 2 // 5].time if objects else -1)
+    return Beatmap(
+        audio_filename=audio_filename, title=title, artist=artist, version=preset.name, creator=creator,
+        hp=preset.hp, cs=preset.cs, od=preset.od, ar=preset.ar,
+        slider_multiplier=preset.slider_multiplier, distance_spacing=preset.spacing,
+        preview_time=preview, timing_points=tps,
+        breaks=compute_breaks(objects, preset.ar), hit_objects=objects,
+    )
+
+
+def pick_device(device: Optional[str] = None) -> str:
+    if device and device != "auto":
+        return device
+    try:
+        import torch
+
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    except Exception:
+        return "cpu"
+
+
+def generate(audio_path: str | Path, difficulties: List[str], out_dir: str | Path = "out",
+             seed: int = 0, bpm: Optional[float] = None, offset_ms: Optional[float] = None,
+             title: Optional[str] = None, artist: Optional[str] = None,
+             creator: str = "AUTO-OSU", osu_shift_ms: int = OSU_TIMING_SHIFT_MS, log=print,
+             rhythm_model: Optional[str] = None, temperature: float = 0.9, density: Optional[float] = None,
+             density_bias: float = 0.0, star_rating: Optional[float] = None, decode_steps: int = 12,
+             coord_model: Optional[str] = None, coord_steps: int = 100, cfg_scale: float = 1.0,
+             device: Optional[str] = None, progress: Optional[ProgressFn] = None) -> GenerateResult:
+    """Analyse a song and write one .osz with the requested difficulties.
+
+    rhythm_model / coord_model: paths to the trained models; without them the rule-based layers run.
+    progress(fraction, message) is called as work advances (for GUIs); log(text) gets the human summary.
+    """
+    t0 = _time.perf_counter()
+    audio_path, out_dir = Path(audio_path), Path(out_dir)
+    presets = [get_preset(d) for d in difficulties]
+    report = progress or (lambda f, m: None)
+
+    report(0.0, "load")
+    log(f"[1/4] loading {audio_path.name}")
+    y, sr = load_audio(audio_path)
+    report(0.05, "analyse")
+    log(f"[2/4] analysing audio ({len(y) / sr:.1f} s)")
+    analysis = analyze(y, sr)
+    log(f"      {len(analysis.onsets)} onsets detected")
+
+    report(0.18, "timing")
+    log("[3/4] estimating timing")
+    timing = estimate_timing(analysis, bpm_override=bpm, offset_override_ms=offset_ms)
+    log(f"      BPM {timing.bpm:g}  offset {timing.offset_ms:.0f} ms (written as {timing.offset_ms - osu_shift_ms:.0f} ms, osu! convention)")
+
+    meta_title, meta_artist = read_metadata(audio_path)
+    title, artist = title or meta_title, artist or meta_artist
+    workdir = out_dir / ".work"
+    audio_file = prepare_audio(audio_path, workdir)
+    sections = analyse_sections(analysis, timing)
+    kiai = sections.kiai
+    log(f"      {len(kiai)} kiai section(s): " + ", ".join(f"{a / 1000:.0f}-{b / 1000:.0f}s" for a, b in kiai))
+
+    dev = pick_device(device) if (rhythm_model or coord_model) else "cpu"
+    model = mel = cm = None
+    if rhythm_model:
+        from .ml.model import TickTransformer
+        from .ml.sample import song_mel_uint8
+
+        report(0.22, "load rhythm model")
+        model = TickTransformer.load(rhythm_model, dev)
+        mel = song_mel_uint8(audio_path)
+        log(f"      rhythm model {Path(rhythm_model).name} on {dev}")
+    if coord_model:
+        from .ml.coord_infer import load_coord_model
+
+        report(0.25, "load coordinate model")
+        cm = load_coord_model(coord_model, dev)
+        log(f"      coordinate model {Path(coord_model).name} on {dev}")
+
+    log("[4/4] generating difficulties")
+    diffs: List[DiffResult] = []
+    span = 0.68 / max(1, len(presets))
+    for i, preset in enumerate(presets):
+        base = 0.28 + i * span
+        preset = effective_preset(preset, timing)
+        star = star_rating if star_rating is not None else preset.star
+        rng = np.random.default_rng(seed * 1000 + i)
+        report(base, f"{preset.name}: rhythm")
+        if model is not None:
+            from .ml.sample import generate_rhythm
+
+            events = generate_rhythm(model, mel, timing, preset, analysis, sections, star_rating=star,
+                                     density=density, temperature=temperature, none_bias=density_bias,
+                                     decode_steps=decode_steps, seed=seed * 1000 + i, device=dev)
+        else:
+            events = build_events(analysis, timing, preset, rng, sections)
+        sv_sections = [(a, b, preset.kiai_sv) for a, b in kiai]
+        overrides: List[SvOverride] = []
+        if cm is not None:
+            from .ml.coord_infer import place_with_model
+
+            def coord_progress(f: float, msg: str, _b=base, _n=preset.name) -> None:
+                report(_b + span * (0.05 + 0.95 * f), f"{_n}: placing ({msg})")
+
+            placed = place_with_model(events, preset, timing, cm, sv_sections, star=star, seed=seed * 1000 + i,
+                                      steps=coord_steps, cfg_scale=cfg_scale, progress=coord_progress)
+            objects, overrides = placed.objects, placed.sv_overrides
+        else:
+            objects = place(events, preset, timing, rng, sv_sections)
+        bm = build_beatmap(preset, timing, objects, kiai, audio_file.name, title, artist, creator, osu_shift_ms,
+                           sv_overrides=overrides)
+        res = DiffResult(preset, events, bm)
+        diffs.append(res)
+        s = res.summary()
+        log(f"      {preset.name:<7} {s['objects']:4d} objects "
+            f"({s['circles']} circles, {s['sliders']} sliders, {s['spinners']} spinners) "
+            f"{s['nps']:.2f} obj/s" + (f", {len(overrides)} slider(s) shortened" if overrides else ""))
+
+    report(0.97, "package")
+    osz = write_osz([d.beatmap for d in diffs], audio_file, out_dir)
+    report(1.0, "done")
+    return GenerateResult(osz=osz, audio_file=audio_file, timing=timing, analysis=analysis, diffs=diffs,
+                          elapsed_s=_time.perf_counter() - t0, osu_shift_ms=osu_shift_ms, device=dev)

@@ -1,0 +1,25 @@
+# environments / caches
+.venv*/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+
+# generated maps, data, checkpoints (models are released as GitHub release assets)
+out/
+output/
+samples/*
+!samples/.gitkeep
+*.osz
+data/
+runs/
+models/*.pt
+models/*.part
+wandb/
+
+# build artefacts
+build/
+dist/
+
+# external baselines (cloned separately, see docs/)
+external/
