@@ -27,7 +27,9 @@ from .difficulty import PRESETS
 from .i18n import AUTHOR, language, memes, set_language, tr
 from .models import MODELS, app_root, ensure_model, find_model
 
-AUDIO_EXT = ("*.mp3", "*.ogg", "*.wav", "*.flac", "*.m4a", "*.aac", "*.wma", "*.opus")
+from .audio_io import SUPPORTED_EXTS
+
+AUDIO_EXT = tuple("*" + e for e in SUPPORTED_EXTS)
 QUALITY_STEPS = {"fast": 50, "normal": 100, "high": 200}
 ASSETS = Path(__file__).resolve().parent / "assets"
 AVATAR = ASSETS / "avatar.png"          # kanzei's OC; header avatar + window icon when present

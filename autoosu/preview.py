@@ -25,9 +25,9 @@ def render_preview(audio: Path, beatmap: Beatmap, out: Path, song_gain: float = 
     circle / slider head: high tick, louder + brighter on a new combo; slider end: low tick;
     spinner: soft noise for its whole duration.
     """
-    import librosa
+    from .audio_io import decode
 
-    y, sr = librosa.load(str(audio), sr=44100, mono=True)
+    y, sr = decode(audio, sr=44100, mono=True)
     mix = y * song_gain
     head = _tick(sr, 1500.0, 40, 0.7)
     head_nc = _tick(sr, 2200.0, 50, 0.85)
@@ -53,7 +53,7 @@ def render_preview(audio: Path, beatmap: Beatmap, out: Path, song_gain: float = 
     mix = (mix / peak * 0.95).astype(np.float32)
     out.parent.mkdir(parents=True, exist_ok=True)
     if out.suffix.lower() == ".mp3":
-        from .package import encode_mp3
+        from .audio_io import transcode_mp3 as encode_mp3
 
         wav = out.with_suffix(".tmp.wav")
         sf.write(str(wav), mix, sr)

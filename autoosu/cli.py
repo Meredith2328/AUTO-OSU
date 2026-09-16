@@ -12,7 +12,7 @@ from .models import MODELS, ensure_model, find_model
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="autoosu", description="Generate an osu!standard beatmap from a song.")
-    p.add_argument("audio", nargs="?", help="song file (mp3/ogg/wav/flac/m4a ...)")
+    p.add_argument("audio", nargs="?", help="song file: mp3/ogg/wav/flac/m4a/aac/wma/opus ... or a video (its audio track is used)")
     p.add_argument("-d", "--difficulty", nargs="+", default=["Normal", "Hard"],
                    metavar="NAME", help=f"difficulties to generate: {', '.join(PRESETS)}")
     p.add_argument("-o", "--out", default="out", help="output directory (default: out)")

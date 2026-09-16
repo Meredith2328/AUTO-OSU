@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AUTO-OSU architecture</title>
+<style>
+  :root { --bg:#0f0f11; --panel:#18181b; --border:#3a3a42; --text:#ecebe6; --muted:#9a9aa6; --gold:#e6a93c; --blue:#4fb8ff; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:"Segoe UI", "Microsoft YaHei UI", Helvetica, Arial, sans-serif; }
+  .page { width:1400px; padding:36px 44px 40px; }
+  h1 { margin:0; font-size:26px; color:var(--gold); letter-spacing:.3px; }
+  .lead { margin:6px 0 26px; color:var(--muted); font-size:14px; }
+  .lane { display:grid; grid-template-columns:120px 1fr; align-items:center; margin-bottom:6px; }
+  .lane-label { color:#6f6f7a; font-size:12px; letter-spacing:2px; text-transform:uppercase; }
+  .row { display:flex; align-items:stretch; gap:0; }
+  .box { background:var(--panel); border:1.5px solid var(--border); border-radius:12px; padding:12px 16px; min-width:150px; max-width:330px; }
+  .box h3 { margin:0 0 6px; font-size:15px; font-weight:700; color:var(--text); }
+  .box h3 small { font-weight:400; color:var(--muted); font-size:12px; margin-left:6px; }
+  .box p { margin:0; color:var(--muted); font-size:12.5px; line-height:1.45; }
+  .box.model { border-color:var(--gold); background:#1d1a12; }
+  .box.model h3 { color:var(--gold); }
+  .box.io { border-color:var(--blue); background:#141a22; }
+  .arrow { display:flex; align-items:center; padding:0 8px; color:var(--gold); font-size:22px; }
+  .down { display:grid; grid-template-columns:120px 1fr; margin:4px 0 4px; }
+  .down span { color:var(--gold); font-size:22px; padding-left:130px; line-height:1; }
+  .side { display:grid; grid-template-columns:120px 1fr; margin-top:26px; }
+  .side .row { gap:14px; }
+  .legend { margin-top:22px; color:var(--muted); font-size:12px; display:flex; gap:22px; padding-left:120px; }
+  .legend i { display:inline-block; width:14px; height:14px; border-radius:4px; vertical-align:-2px; margin-right:6px; border:1.5px solid var(--border); background:var(--panel); }
+  .legend i.m { border-color:var(--gold); background:#1d1a12; }
+  .legend i.io { border-color:var(--blue); background:#141a22; }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>AUTO-OSU architecture</h1>
+  <div class="lead">Song in, beatmap out: rules handle analysis and timing, two trained models do the mapping, the result is packed as an .osz and handed to osu!.</div>
+
+  <div class="lane">
+    <div class="lane-label">Input</div>
+    <div class="row">
+      <div class="box io"><h3>Any audio or video file</h3><p>mp3 · ogg · wav · flac · m4a · aac · wma · opus · mp4 · mkv · webm …</p></div>
+      <div class="arrow">→</div>
+      <div class="box io"><h3>Input normalisation<small>audio_io.py</small></h3><p>libsndfile decoder, ffmpeg fallback (bundled) — video files contribute their audio track</p></div>
+      <div class="arrow">→</div>
+      <div class="box io"><h3>Analysis waveform</h3><p>22.05 kHz mono float32</p></div>
+      <div class="arrow">+</div>
+      <div class="box io"><h3>Audio for osu!</h3><p>mp3 / ogg-vorbis copied through, everything else transcoded to 192 kbps mp3</p></div>
+    </div>
+  </div>
+  <div class="down"><div></div><span>↓</span></div>
+
+  <div class="lane">
+    <div class="lane-label">Analysis (rules)</div>
+    <div class="row">
+      <div class="box"><h3>Audio analysis<small>audio.py</small></h3><p>Harmonic / percussive split (HPSS) · onset envelopes per drum band (kick / snare / hat) · loudness · onset list with strength and sustain</p></div>
+      <div class="arrow">→</div>
+      <div class="box"><h3>Timing<small>timing.py · rhythm.py</small></h3><p>Tempogram BPM with octave correction · 1 ms offset refinement on the waveform · downbeat phase · loudness sections → kiai</p></div>
+    </div>
+  </div>
+  <div class="down"><div></div><span>↓</span></div>
+
+  <div class="lane">
+    <div class="lane-label">Mapping (models)</div>
+    <div class="row">
+      <div class="box model"><h3>Rhythm model<small>rhythm_v0.pt</small></h3><p>Masked tick transformer, 29 M parameters · 1/4-beat grid, each tick → none / circle / slider head / body / end / spinner · conditioned on star rating, CS, AR, OD, HP, loudness, beat length</p></div>
+      <div class="arrow">→</div>
+      <div class="box model"><h3>Coordinate model<small>coord_v0.pt</small></h3><p>Diffusion transformer (DiT-B), 130 M parameters, trained from scratch · object tokens (time + type) → x / y from pure noise · conditioned on star rating and CS, picks its own spacing</p></div>
+      <div class="arrow">→</div>
+      <div class="box"><h3>Slider fitting<small>sliderpath.py</small></h3><p>Scale the learned shape about the head to the required length · mirror / rotate if it leaves the field · shorten with a local green line only as a last resort · every path stays inside 512 × 384</p></div>
+    </div>
+  </div>
+  <div class="down"><div></div><span>↓</span></div>
+
+  <div class="lane">
+    <div class="lane-label">Output</div>
+    <div class="row">
+      <div class="box"><h3>Beatmap writer<small>beatmap.py · package.py</small></h3><p>.osu v14 · objects 26 ms early (ranked-map convention) · kiai and SV green lines · metadata · zipped into an .osz</p></div>
+      <div class="arrow">→</div>
+      <div class="box io"><h3>.osz</h3><p>all chosen difficulties in one package</p></div>
+      <div class="arrow">→</div>
+      <div class="box io"><h3>osu!</h3><p>opened automatically, imports itself</p></div>
+    </div>
+  </div>
+
+  <div class="side">
+    <div class="lane-label">Around it</div>
+    <div class="row">
+      <div class="box"><h3>Entry points</h3><p>GUI (Chinese / English, light / dark) · command line · Windows exe — all call generate()</p></div>
+      <div class="box"><h3>Model registry<small>models.py</small></h3><p>looks in models/ next to the app, downloads missing files from the GitHub release and verifies sha256</p></div>
+      <div class="box"><h3>Training<small>autoosu/ml · coord/ · scripts/</small></h3><p>140 k ranked beatmaps (project-riz/osu-beatmaps) → features / ORS layout → multi-GPU training → exported fp16 model files</p></div>
+    </div>
+  </div>
+
+  <div class="legend"><span><i class="io"></i>data in / out</span><span><i></i>rule-based code</span><span><i class="m"></i>trained model</span></div>
+</div>
+</body>
+</html>

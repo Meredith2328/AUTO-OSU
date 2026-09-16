@@ -54,8 +54,10 @@ class AudioAnalysis:
 
 
 def load_audio(path: str | Path, sr: int = 22050) -> Tuple[np.ndarray, int]:
-    y, sr = librosa.load(str(path), sr=sr, mono=True)
-    return y, sr
+    """Mono waveform at `sr` from any audio/video file (libsndfile, else ffmpeg)."""
+    from .audio_io import decode
+
+    return decode(path, sr=sr, mono=True)
 
 
 def _normalise(x: np.ndarray, pct: float = 99.0) -> np.ndarray:

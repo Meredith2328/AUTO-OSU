@@ -2,15 +2,13 @@
 from __future__ import annotations
 
 import re
-import shutil
-import subprocess
 import zipfile
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 
+from .audio_io import find_ffmpeg, prepare_for_osu, transcode_mp3  # noqa: F401  (re-exported)
 from .beatmap import Beatmap
 
-OSU_AUDIO_EXT = {".mp3", ".ogg"}
 _ILLEGAL = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 
@@ -42,44 +40,12 @@ def read_metadata(path: Path) -> Tuple[str, str]:
     return sanitize(title), sanitize(artist or "Unknown Artist")
 
 
-def find_ffmpeg() -> Optional[str]:
-    """ffmpeg on PATH, else the binary shipped by imageio-ffmpeg (bundled in the exe), else None."""
-    exe = shutil.which("ffmpeg")
-    if exe:
-        return exe
-    try:
-        import imageio_ffmpeg
-
-        return imageio_ffmpeg.get_ffmpeg_exe()
-    except Exception:
-        return None
-
-
-def encode_mp3(src: Path, dst: Path, bitrate: str = "192k") -> Path:
-    """Transcode any audio file to mp3: ffmpeg if available, else libsndfile (mp3/ogg/wav/flac input)."""
-    ffmpeg = find_ffmpeg()
-    if ffmpeg:
-        subprocess.run([ffmpeg, "-y", "-loglevel", "error", "-i", str(src), "-vn",
-                        "-codec:a", "libmp3lame", "-b:a", bitrate, str(dst)], check=True,
-                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        return dst
-    import soundfile as sf
-
-    if "MP3" not in sf.available_formats():
-        raise RuntimeError(f"cannot convert {src.suffix} to mp3: install ffmpeg or use an mp3/ogg file")
-    data, sr = sf.read(str(src), always_2d=True)
-    sf.write(str(dst), data, sr, format="MP3")
-    return dst
+encode_mp3 = transcode_mp3
 
 
 def prepare_audio(src: Path, workdir: Path) -> Path:
-    """Copy (or transcode to mp3) the song so osu! can play it. Returns the file in workdir."""
-    workdir.mkdir(parents=True, exist_ok=True)
-    if src.suffix.lower() in OSU_AUDIO_EXT:
-        dst = workdir / f"audio{src.suffix.lower()}"
-        shutil.copyfile(src, dst)
-        return dst
-    return encode_mp3(src, workdir / "audio.mp3")
+    """Copy (mp3 / ogg-vorbis) or transcode (anything else) the song so osu! can play it."""
+    return prepare_for_osu(src, workdir)
 
 
 def write_osz(beatmaps: List[Beatmap], audio: Path, out_dir: Path) -> Path:

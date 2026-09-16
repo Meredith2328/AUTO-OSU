@@ -22,7 +22,9 @@ def song_mel_uint8(audio_path: str | Path) -> np.ndarray:
     """Same features as prepare_data, computed from any audio file."""
     import librosa
 
-    y, _ = librosa.load(str(audio_path), sr=SR, mono=True)
+    from ..audio_io import decode
+
+    y, _ = decode(audio_path, sr=SR, mono=True)
     y = y / (float(np.abs(y).max()) or 1.0)
     mel = librosa.feature.melspectrogram(y=y, sr=SR, n_fft=N_FFT, hop_length=HOP, n_mels=N_MELS, fmin=20, fmax=8000)
     lm = np.log(mel + 1e-6).T
