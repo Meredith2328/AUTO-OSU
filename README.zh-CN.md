@@ -80,6 +80,13 @@ python -m autoosu "歌曲.mp3" -d Normal Hard -o out    # 命令行
 设计记录、实验和结果：[docs/rhythm_model_design.md](docs/rhythm_model_design.md)、
 [docs/mapperatorinator_tech.md](docs/mapperatorinator_tech.md)。
 
+## 顶部动画是怎么做的
+
+金色脉冲波纹用 PIL 以 2 倍纵向分辨率绘制再缩小（抗锯齿），由后台线程按显示器刷新率节拍
+（240 Hz 可跑满；Tk 自带的 `after()` 在这种频率下会空转吃掉四分之一核心）。待机时播放预渲染的
+无缝循环，唯一帧率按 64 MB 内存预算自适应（1440p / 150 % 缩放下约 96 帧/秒），占约 7 % 单核；
+生成时改为实时渲染，让波峰跟着进度走（每帧约 1.4 ms）。「高级选项」里可以关掉动画。
+
 ## 自己训练
 
 训练发布模型用到的所有东西都在仓库里：

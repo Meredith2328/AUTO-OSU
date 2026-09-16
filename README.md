@@ -85,6 +85,15 @@ song ──► audio analysis ──► timing ──► rhythm model ──► 
 Design notes, experiments and results: [docs/rhythm_model_design.md](docs/rhythm_model_design.md),
 [docs/mapperatorinator_tech.md](docs/mapperatorinator_tech.md).
 
+## The header animation (for the curious)
+
+The gold pulse waves are drawn with PIL at 2x vertical resolution and box-reduced (anti-aliased),
+paced by a background thread to the display refresh rate (240 Hz works; Tk's own `after()` timer
+would burn a quarter of a core spinning at that rate). While idle the app plays a pre-rendered
+seamless loop whose unique frame rate adapts to a 64 MB memory budget (~96 fps on a 1440p/150 %
+display) at ~7 % of one core; while generating, frames are rendered live so the crest can follow
+the progress (~1.4 ms per frame). *Advanced options* has a switch to freeze it on weak machines.
+
 ## Training your own models
 
 Everything used to train the released models is in the repo:
