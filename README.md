@@ -12,7 +12,7 @@
 ![AUTO-OSU 主界面](docs/screenshot_zh.png)
 
 <details>
-<summary>亮色主题 / 生成中的样子</summary>
+<summary>亮色主题 / 生成中</summary>
 
 ![亮色主题](docs/screenshot_en.png)
 
@@ -75,7 +75,6 @@ Windows 10 / 11，64 位。
 | 计算设备 | auto 优先用 CUDA 显卡，没有就用 CPU。 |
 | 生成引擎 | 「AI 模型」是正常模式；「纯规则」不用模型、几秒出图，只在没模型或想对比时用。 |
 | 试听 mp3 | 另存一个原曲压低音量、每个物件加点击声的 mp3，不开 osu! 也能听节奏对不对。 |
-| 顶部波纹动画 | 待机时几乎不占资源；机器很弱可以关掉。 |
 
 ### 命令行
 
@@ -156,12 +155,6 @@ MaskGIT 式 12 轮并行解码。
 完整实验记录（含失败的路线）在 [docs/rhythm_model_design.md](docs/rhythm_model_design.md)，
 wandb 项目：[autoosu-rhythm](https://wandb.ai/kanzei/autoosu-rhythm)、[autoosu-coords](https://wandb.ai/kanzei/autoosu-coords)。
 
-### 顶部动画
-
-金色脉冲波纹是 PIL 以 2 倍纵向分辨率画线再缩小（抗锯齿），由后台线程按显示器刷新率发节拍（240 Hz 可跑满）。
-待机播放预渲染的无缝循环，唯一帧率按 64 MB 内存预算自适应，实测占约 7% 单核；生成时改为实时渲染让波峰跟着进度走。
-「高级选项」里可以关掉。
-
 ## 自己训练 / 打包
 
 训练用到的全部代码都在仓库里：`autoosu/ml/prepare_data.py`（HF 分片 → 特征与标签）、`autoosu/ml/train.py`（节奏模型，`torchrun` 多卡）、
@@ -214,5 +207,6 @@ powershell -ExecutionPolicy Bypass -File scripts/build_exe.ps1            # dist
 - [Mapperatorinator](https://github.com/OliBomby/Mapperatorinator)（MIT）—— token 化思路和对比基线。
 - [project-riz/osu-beatmaps](https://huggingface.co/datasets/project-riz/osu-beatmaps) —— 训练语料。
 - [osu-dreamer](https://github.com/jaswon/osu-dreamer) —— 早期基线。
+- [Noto Sans SC](https://fonts.google.com/noto/specimen/Noto+Sans+SC)（OFL）—— 界面字体，以 AUTO-OSU Sans 之名随程序打包。
 
 作者：kanzei

@@ -17,5 +17,5 @@
   "CTkTextbox": {"corner_radius": 8, "border_width": 0, "fg_color": ["#f6f6f8", "#0c0c0e"], "border_color": ["#d6d6dc", "#2c2c32"], "text_color": ["#3a3a44", "#c9c9d0"], "scrollbar_button_color": ["#cfcfd6", "#3a3a42"], "scrollbar_button_hover_color": ["#a9d3f5", "#4fb8ff"]},
   "CTkScrollableFrame": {"label_fg_color": ["#e9e9ee", "#202024"]},
   "DropdownMenu": {"fg_color": ["#ffffff", "#18181b"], "hover_color": ["#e9e9ee", "#2c2c32"], "text_color": ["#1c1c22", "#ecebe6"]},
-  "CTkFont": {"macOS": {"family": "SF Display", "size": 13, "weight": "normal"}, "Windows": {"family": "Microsoft YaHei UI", "size": 13, "weight": "normal"}, "Linux": {"family": "Roboto", "size": 13, "weight": "normal"}}
+  "CTkFont": {"macOS": {"family": "SF Display", "size": 13, "weight": "normal"}, "Windows": {"family": "Segoe UI", "size": 13, "weight": "normal"}, "Linux": {"family": "Roboto", "size": 13, "weight": "normal"}}
 }

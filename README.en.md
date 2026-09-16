@@ -77,7 +77,6 @@ ffmpeg ships with the program; nothing to install.
 | Device | auto prefers a CUDA GPU, otherwise CPU. |
 | Engine | "AI models" is the normal mode; "rules only" needs no models and maps in seconds — for comparison or when models are missing. |
 | Preview mp3 | Also saves an mp3 with the song turned down and a click on every object, to check the rhythm without opening osu!. |
-| Header wave animation | Nearly free while idle; switch it off on a weak machine. |
 
 ### Command line
 
@@ -158,12 +157,6 @@ An autoregressive rhythm model was trained too; causal attention could not hear 
 The full log, failed routes included, is in [docs/rhythm_model_design.md](docs/rhythm_model_design.md) (Chinese);
 wandb projects: [autoosu-rhythm](https://wandb.ai/kanzei/autoosu-rhythm), [autoosu-coords](https://wandb.ai/kanzei/autoosu-coords).
 
-### The header animation
-
-The gold pulse waves are drawn with PIL at 2× vertical resolution and box-reduced (anti-aliased), paced by a background thread to the display refresh rate (240 Hz works).
-While idle a pre-rendered seamless loop plays, its unique frame rate adapting to a 64 MB memory budget, at about 7 % of one core; while generating, frames are rendered live so the crest follows the progress.
-It can be switched off in Advanced options.
-
 ## Train it yourself / build the exe
 
 Everything used for training is in the repo: `autoosu/ml/prepare_data.py` (HF shards → features and labels), `autoosu/ml/train.py` (rhythm model, `torchrun` multi-GPU),
@@ -216,5 +209,6 @@ Generated beatmaps are yours; the songs belong to their artists.
 - [Mapperatorinator](https://github.com/OliBomby/Mapperatorinator) (MIT) — tokenisation ideas and the baseline we compared against.
 - [project-riz/osu-beatmaps](https://huggingface.co/datasets/project-riz/osu-beatmaps) — the training corpus.
 - [osu-dreamer](https://github.com/jaswon/osu-dreamer) — an earlier baseline.
+- [Noto Sans SC](https://fonts.google.com/noto/specimen/Noto+Sans+SC) (OFL) — the interface font, bundled as AUTO-OSU Sans.
 
 Author: kanzei

@@ -43,5 +43,7 @@ Third-party code and data:
   Copyright (c) 2024 OliBomby, MIT License (see autoosu/ml/coord/LICENSE).
 * The bundled ffmpeg binary (imageio-ffmpeg) is licensed under the LGPL/GPL; it is invoked as a
   separate process and can be replaced by any ffmpeg on PATH.
+* autoosu/assets/fonts/ ("AUTO-OSU Sans") are static instances of Noto Sans SC (Google / Adobe),
+  SIL Open Font License 1.1 (autoosu/assets/fonts/OFL.txt), renamed as the OFL requires.
 * The models were trained on beatmaps from the project-riz/osu-beatmaps dataset; the beatmaps
   and songs belong to their respective creators and artists.

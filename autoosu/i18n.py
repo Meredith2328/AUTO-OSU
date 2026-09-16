@@ -12,9 +12,9 @@ STRINGS: Dict[str, Dict[str, str]] = {
     "app.subtitle": {"zh": "选一首歌，几十秒后拿到可以直接玩的 osu! 谱面",
                      "en": "Pick a song, get a playable osu! beatmap in under a minute"},
     "song.section": {"zh": "歌曲", "en": "Song"},
-    "song.hint": {"zh": "把音频文件拖到这里，或点击「浏览」。mp3 / ogg / wav / flac / m4a / aac / wma / opus 都行，视频会自动抽出音轨",
-                  "en": "Drop an audio file here or click Browse. mp3 / ogg / wav / flac / m4a / aac / wma / opus, or a video (its audio track is used)"},
-    "song.browse": {"zh": "浏览…", "en": "Browse…"},
+    "song.hint": {"zh": "拖到这里或点「浏览」。mp3 / ogg / wav / flac / m4a / aac / wma / opus 都行，视频会自动抽出音轨",
+                  "en": "Drop a file here or click Browse. mp3 / ogg / wav / flac / m4a / aac / wma / opus, or a video (audio track)"},
+    "song.browse": {"zh": "浏览...", "en": "Browse..."},
     "song.filetypes": {"zh": "音频文件", "en": "Audio files"},
     "diff.section": {"zh": "难度", "en": "Difficulties"},
     "diff.Easy": {"zh": "Easy　新手", "en": "Easy"},
@@ -24,7 +24,7 @@ STRINGS: Dict[str, Dict[str, str]] = {
     "diff.hint": {"zh": "一次可以生成多个难度，都会打包进同一个 .osz", "en": "Several difficulties go into one .osz"},
     "out.section": {"zh": "输出", "en": "Output"},
     "out.folder": {"zh": "保存到", "en": "Save to"},
-    "out.browse": {"zh": "选择文件夹…", "en": "Choose folder…"},
+    "out.browse": {"zh": "选择文件夹...", "en": "Choose folder..."},
     "out.open_osu": {"zh": "生成后自动导入 osu!（打开 .osz）", "en": "Import into osu! when done (opens the .osz)"},
     "adv.section": {"zh": "高级选项", "en": "Advanced"},
     "adv.show": {"zh": "▸ 高级选项", "en": "▸ Advanced options"},
@@ -45,7 +45,6 @@ STRINGS: Dict[str, Dict[str, str]] = {
     "adv.engine.rules": {"zh": "纯规则（无需模型，效果一般）", "en": "Rules only (no models, basic)"},
     "adv.star": {"zh": "星级条件（留空按难度默认）", "en": "Star rating (blank = per difficulty)"},
     "adv.preview": {"zh": "另存带点击声的试听 mp3", "en": "Also save a click-track preview mp3"},
-    "adv.anim": {"zh": "顶部波纹动画（关掉更省资源）", "en": "Header wave animation (off = lighter on the CPU)"},
     "models.section": {"zh": "模型", "en": "Models"},
     "models.ok": {"zh": "模型已就绪：节奏 {rhythm} · 坐标 {coord}", "en": "Models ready: rhythm {rhythm} · coordinates {coord}"},
     "models.missing": {"zh": "缺少模型文件（约 320 MB），点击下载后才能使用 AI 模式",
@@ -83,20 +82,6 @@ STRINGS: Dict[str, Dict[str, str]] = {
     "theme.dark": {"zh": "☾ 暗色", "en": "☾ Dark"},
     "about": {"zh": "kanzei · github.com/kanze1/AUTO-OSU", "en": "Made by kanzei · github.com/kanze1/AUTO-OSU"},
 }
-
-
-# captions floating on the header waves while generating: osu! player slang
-MEMES = {
-    "zh": ["读图中……", "跟着鼓点走", "抓跳预备", "串，排上", "kiai time！", "别断连", "hit300 全拿", "别手抖",
-           "叠一叠", "reverse 也要算", "AR9 走起", "农 pp 预备", "nomod 纯手", "红线卡准了"],
-    "en": ["sightreading…", "follow the kick", "jumps incoming", "laying streams", "kiai time!", "don't choke",
-           "300s only", "no shaky hands", "stack it", "reverse sliders too", "AR9 let's go", "pp farm ready",
-           "nomod, pure skill", "red line nailed"],
-}
-
-
-def memes() -> list:
-    return MEMES.get(_current) or MEMES["en"]
 
 
 def set_language(lang: str) -> None:

@@ -2,9 +2,9 @@
 
 Runs the pipeline in a worker thread and reports progress through a queue; all texts come from
 `autoosu.i18n` so the window can switch between Chinese and English on the fly. Light and dark
-looks share one palette taken from kanzei's OC: graphite black, amber-gold eyes, the electric-blue
-cheek glow and warm back-light. A few small animations (gold pulse waves in the header, smooth progress,
-a breathing Generate button) run on Tk timers and pause when the window is hidden.
+looks share one palette taken from kanzei's OC: graphite black, amber-gold eyes and the electric-blue
+cheek glow. The progress bar eases towards its target and the Generate button breathes while busy;
+nothing else animates.
 """
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ import json
 import math
 import os
 import queue
-import random
 import subprocess
 import sys
 import threading
@@ -24,7 +23,7 @@ from typing import Dict, Optional, Tuple
 
 from . import __version__
 from .difficulty import PRESETS
-from .i18n import AUTHOR, language, memes, set_language, tr
+from .i18n import AUTHOR, language, set_language, tr
 from .models import MODELS, app_root, ensure_model, find_model
 
 from .audio_io import SUPPORTED_EXTS
@@ -102,11 +101,17 @@ def _avatar_image(size: int):
 
         img = Image.open(AVATAR).convert("RGBA")
         side = min(img.size)
-        img = img.crop(((img.width - side) // 2, 0, (img.width - side) // 2 + side, side)).resize((size, size), Image.LANCZOS)
-        mask = Image.new("L", img.size, 0)
-        ImageDraw.Draw(mask).ellipse((0, 0, img.width - 1, img.height - 1), fill=255)
-        img.putalpha(mask)
-        return img
+        img = img.crop(((img.width - side) // 2, 0, (img.width - side) // 2 + side, side))
+        big = size * 4
+        img = img.resize((big, big), Image.LANCZOS)
+        disc = Image.new("RGBA", (big, big), (0, 0, 0, 0))
+        ImageDraw.Draw(disc).ellipse((0, 0, big - 1, big - 1), fill=(36, 36, 40, 255))   # graphite backdrop
+        disc.alpha_composite(img)
+        mask = Image.new("L", (big, big), 0)
+        ImageDraw.Draw(mask).ellipse((0, 0, big - 1, big - 1), fill=255)
+        disc.putalpha(mask)
+        ImageDraw.Draw(disc).ellipse((2, 2, big - 3, big - 3), outline=(230, 169, 60, 255), width=max(4, big // 40))
+        return disc.resize((size, size), Image.LANCZOS)
     except Exception:
         return None
 
@@ -124,406 +129,34 @@ def run_gui() -> int:
     ctk.set_appearance_mode("system")
 
     class Header:
-        """Canvas banner with anti-aliased gold pulse waves, title, subtitle, avatar and the toggles.
-
-        Rendering strategy (measured on a 240 Hz display):
-        * idle: a seamless loop is pre-rendered once (PIL, 2x supersampled, in a background thread)
-          and played back by swapping canvas images at the display refresh rate: ~0.1 ms per frame,
-          memory capped by LOOP_BUDGET_MB (unique frames per second adapt to the budget);
-        * generating: frames are rendered live (~1 ms each) so the crest can follow the progress,
-          still paced to the refresh rate; a caption in osu! slang rides on the crest.
-        Frames are paced by a background thread that sleeps precisely and posts a virtual event
-        (Tk's own after() at 240 Hz burns ~25 % of a core just spinning); the main thread draws.
-        Motion is time based, so a dropped frame never changes the speed."""
-
-        N_LINES = 8
-        N_POINTS = 64
-        SS = 2                      # supersampling for anti-aliasing
-        LOOP_SECONDS = 2.0          # the idle loop is exactly periodic over this
-        LOOP_BUDGET_MB = 64         # Tk keeps 4 bytes per pixel per frame
+        """Static banner: avatar (when assets/avatar.png exists), title, subtitle and the two toggles."""
 
         def __init__(self, app: "App", master) -> None:
-            import tkinter.font as tkfont
-
             self.app = app
-            try:   # DPI scaling customtkinter applies to its widgets (1.5 on a 150 % display)
-                s = float(ctk.ScalingTracker.get_widget_scaling(app))
-            except Exception:
-                s = 1.0
-            self.s = s
-            self.h = int(124 * s)
-            self.canvas = tk.Canvas(master, height=self.h, highlightthickness=0, bd=0, bg=app.c("bg"))
-            self.canvas.grid(row=0, column=0, sticky="ew", padx=20, pady=(10, 0))
-            # negative sizes = pixels, the same unit customtkinter uses for its own scaled fonts
-            self.f_title = tkfont.Font(family=_ui_font(), size=-int(round(24 * s)), weight="bold")
-            self.f_sub = tkfont.Font(family=_ui_font(), size=-int(round(13 * s)))
-            self.refresh_hz = _display_refresh_hz()
-            self.frame_dt = 1.0 / self.refresh_hz
-            self.next_due = time.perf_counter()
-            self.t0 = time.time()
-            self.energy = 0.25          # 0.25 idle, 1 while generating, >1 for the finish flash
-            self.energy_target = 0.25
-            self.busy = False
-            self.progress = 0.0
-            self.crest = 0.68           # where the pulse sits (fraction of the width); follows progress when busy
-            self.caption_at = 0.0
-            self.caption_idx = -1
-            self.celebrate_until = 0.0
-            self._last_energy_fill = -1.0
-            self.photo = None
-            self.loop = None            # list of PhotoImage once the idle loop is ready
-            self.loop_key = None
-            self.loop_n = 0
-            self._loop_job = None       # (key, thread, result holder)
-            self._loop_pending = None
-            self.stats = {"mode": "live", "frame_ms": 0.0, "fps": 0.0, "loop_mb": 0.0, "loop_fps": 0}
-            self._fps_count = 0
-            self._fps_t = time.perf_counter()
-            self._last_tick = time.perf_counter()
-            omega = 2 * math.pi / self.LOOP_SECONDS
-            rng = random.Random(3)
-            self.lines = []
-            n = self.N_LINES
-            for k in range(n):
-                u = k / (n - 1)
-                self.lines.append(dict(
-                    y0=(0.56 + (u - 0.5) * 0.52) * self.h,          # stacked around the middle
-                    a1=(8 + 30 * u) * s, f1=1.1 + 0.35 * u + rng.uniform(-0.08, 0.08), p1=rng.uniform(0, 6.3),
-                    a2=(3 + 9 * u) * s, f2=2.4 + 0.6 * u + rng.uniform(-0.1, 0.1), p2=rng.uniform(0, 6.3),
-                    v1=omega * (1 + k % 2), v2=-omega * (1 + k % 3),   # integer multiples: the loop closes exactly
-                    tone=u, bright=(k % 5 == 2), width=(3 if k % 4 == 1 else 2),
-                    fill="#e6a93c", halo="#000000",
-                ))
-            self.omega = omega
-            import numpy as np
-
-            self.u_grid = np.linspace(0.0, 1.0, self.N_POINTS)
-            self.img_id = self.canvas.create_image(0, 0, anchor="nw")
-            self.loop_idx = -1
-            self.loop_x = 0
-            self.loop_y = 0
-            x0 = 0
-            self.avatar_img = None
-            img = _avatar_image(int(72 * s))
+            self.frame = ctk.CTkFrame(master, fg_color="transparent")
+            self.frame.grid(row=0, column=0, sticky="ew", padx=20, pady=(14, 4))
+            self.frame.grid_columnconfigure(1, weight=1)
+            img = _avatar_image(64)
+            self._avatar = None
             if img is not None:
-                from PIL import ImageTk
-
-                self.aura = [self.canvas.create_oval(0, 0, 1, 1, outline="") for _ in range(2)]
-                self.avatar_img = ImageTk.PhotoImage(img)
-                self.avatar_id = self.canvas.create_image(40 * s, 60 * s, image=self.avatar_img)
-                x0 = 92 * s
-            else:
-                self.aura = []
-            self.x0 = x0
-            self.title_id = self.canvas.create_text(x0, 42 * s, text="", anchor="w", font=self.f_title)
-            self.subtitle_id = self.canvas.create_text(x0, 82 * s, text="", anchor="w", font=self.f_sub)
-            self.caption_id = self.canvas.create_text(0, 0, text="", anchor="s", font=self.f_sub)
+                self._avatar = ctk.CTkImage(light_image=img, dark_image=img, size=(64, 64))
+                ctk.CTkLabel(self.frame, image=self._avatar, text="").grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 14))
+            self.title = ctk.CTkLabel(self.frame, font=app.font_title, anchor="w", text_color=PALETTE["gold"])
+            self.title.grid(row=0, column=1, sticky="sw", pady=(0, 1))
+            self.subtitle = ctk.CTkLabel(self.frame, font=app.font, anchor="w", text_color=PALETTE["muted"])
+            self.subtitle.grid(row=1, column=1, sticky="nw", pady=(1, 0))
+            btns = ctk.CTkFrame(self.frame, fg_color="transparent")
+            btns.grid(row=0, column=2, rowspan=2, sticky="ne")
             btn_kw = dict(width=92, height=30, font=app.font, fg_color="transparent", border_width=1,
-                          border_color=PALETTE["border"], bg_color=PALETTE["bg"])
-            self.theme_btn = ctk.CTkButton(self.canvas, text_color=PALETTE["cyan"], command=app.toggle_theme, **btn_kw)
-            self.lang_btn = ctk.CTkButton(self.canvas, text_color=PALETTE["gold"], command=app.toggle_language, **btn_kw)
-            self.theme_win = self.canvas.create_window(0, 20 * s, window=self.theme_btn, anchor="ne")
-            self.lang_win = self.canvas.create_window(0, 20 * s, window=self.lang_btn, anchor="ne")
-            self.canvas.bind("<Configure>", self._layout)
-            self.retheme()
-            self.visible = True
-            self._stop = False
-            self.frame_event = "<<AutoOsuFrame>>"
-            app.bind(self.frame_event, lambda _e: self._tick())
-            self._pacer = threading.Thread(target=self._pace, daemon=True)
-            self._pacer.start()
-
-        def _pace(self) -> None:
-            """Background clock: one virtual event per display refresh (slow when hidden or static)."""
-            nxt = time.perf_counter()
-            while not self._stop:
-                period = self.frame_dt if (self.visible and self.stats["mode"] != "static") else 0.2
-                nxt += period
-                d = nxt - time.perf_counter()
-                if d > 0:
-                    time.sleep(d)
-                else:
-                    nxt = time.perf_counter()
-                try:
-                    self.app.event_generate(self.frame_event, when="tail")
-                except Exception:      # window gone
-                    return
-
-        def stop(self) -> None:
-            self._stop = True
-
-        # ------------------------------------------------------------ layout / colours
-        def _layout(self, _event=None) -> None:
-            w = self.canvas.winfo_width()
-            s = self.s
-            self.canvas.coords(self.theme_win, w - 2, 24 * s)
-            self.canvas.coords(self.lang_win, w - 2 - (92 + 10) * s, 24 * s)
-
-        def retheme(self) -> None:
-            bg = self.app.c("bg")
-            dark = self.app.mode == "dark"
-            self.canvas.configure(bg=bg)
-            self.canvas.itemconfig(self.title_id, fill=self.app.c("gold"))
-            self.canvas.itemconfig(self.subtitle_id, fill=self.app.c("muted"))
-            self.canvas.itemconfig(self.caption_id, fill=self.app.c("gold"))
-            # amber -> pale gold (the eyes); a couple of lines almost white-gold for a halo feel
-            lo, hi = ("#7a5414", "#f6d98a") if dark else ("#d9b25c", "#9a6208")
-            for ln in self.lines:
-                tone = blend(lo, hi, ln["tone"] ** 1.3)
-                if ln["bright"]:
-                    tone = blend(tone, "#fff2cc" if dark else "#b8780f", 0.6)
-                ln["tone_color"] = tone
-            self._last_energy_fill = -1.0
-            self._recolor()
-            self.loop = None            # colours changed: the idle loop must be rendered again
-            self.loop_key = None
-            s = self.s
-            for k, oid in enumerate(self.aura):
-                self.canvas.itemconfig(oid, fill=blend(self.app.c("cyan"), bg, 0.8 + 0.1 * k))
-                r = (46 + 8 * k) * s
-                self.canvas.coords(oid, 40 * s - r, 60 * s - r, 40 * s + r, 60 * s + r)
-
-        def _colors_for(self, e: float) -> list:
-            """(fill, halo) per line for a given energy."""
-            bg = self.app.c("bg")
-            out = []
-            for ln in self.lines:
-                tone = ln.get("tone_color", self.app.c("gold"))
-                dim = 0.02 + 0.3 * (1 - ln["tone"]) + 0.3 * (1 - min(1.0, e)) - 0.3 * max(0.0, e - 1)
-                glow = 0.9 - 0.12 * min(1.0, e) - 0.35 * max(0.0, e - 1)
-                out.append((blend(tone, bg, max(0.0, min(0.7, dim))), blend(tone, bg, max(0.35, glow))))
-            return out
-
-        def _recolor(self) -> None:
-            e = min(2.0, self.energy)
-            if abs(e - self._last_energy_fill) < 0.02:
-                return
-            self._last_energy_fill = e
-            for ln, (fill, halo) in zip(self.lines, self._colors_for(e)):
-                ln["fill"], ln["halo"] = fill, halo
-
-        # ------------------------------------------------------------ state from the app
-        def set_state(self, busy: bool, progress: float) -> None:
-            """Called by the app: the pulse crest follows the progress and the waves wake up."""
-            self.busy = busy
-            self.progress = max(0.0, min(1.0, progress))
-            self.energy_target = 1.0 if busy else 0.25
-            if busy and self.caption_idx < 0:
-                self.caption_idx = 0
-                self.caption_at = 0.0
-
-        def celebrate(self) -> None:
-            self.energy = 1.9
-            self.energy_target = 0.25
-            self.busy = False
-            self.celebrate_until = time.time() + 3.0
-            self.caption_idx = 0
-            self.canvas.itemconfig(self.caption_id, text="SS!!")
-
-        # ------------------------------------------------------------ drawing
-        def _left(self, w: int) -> float:
-            return min(0.45, (self.x0 + 330 * self.s) / w)   # waves grow out of one seam right of the title
-
-        def _draw(self, t: float, w: int, energy: float, crest: float, colors: list):
-            """One frame of the wave region as a PIL image; anti-aliased by drawing at 2x vertical
-            resolution and box-reducing (the lines are near-horizontal, so that is where steps show)."""
-            import numpy as np
-            from PIL import Image, ImageDraw
-
-            ss = self.SS
-            left = self._left(w)
-            breath = 0.82 + 0.18 * math.sin(t * self.omega)
-            amp = 0.6 + 0.6 * min(1.6, energy)
-            mid = 0.56 * self.h
-            x_start = int(left * w) - 4
-            rw = max(8, w - x_start)
-            u = left + (1.0 - left) * self.u_grid
-            spread = np.minimum(1.0, (u - left) / 0.18) ** 1.5           # lines fan out from the seam
-            d1, d2 = (u - crest) / 0.2, (u - 0.93) / 0.08
-            env = (np.exp(-d1 * d1) + 0.5 * np.exp(-d2 * d2)) * spread * (breath * amp)
-            xs = (u * w - x_start)
-            img = Image.new("RGB", (rw, self.h * ss), self.app.c("bg"))
-            draw = ImageDraw.Draw(img)
-            polylines = []
-            for ln, (fill, halo) in zip(self.lines, colors):
-                y = mid + (ln["y0"] - mid) * spread + env * (
-                    ln["a1"] * np.sin(6.283 * ln["f1"] * u + ln["p1"] + t * ln["v1"])
-                    + ln["a2"] * np.sin(6.283 * ln["f2"] * u + ln["p2"] + t * ln["v2"]))
-                pts = np.column_stack((xs, y * ss)).ravel().tolist()
-                polylines.append((ln, pts, fill, halo))
-            if energy > 0.6:      # halos only once the waves are awake (they read as blur at rest)
-                for ln, pts, fill, halo in polylines:
-                    draw.line(pts, fill=halo, width=ln["width"] + 2, joint="curve")
-            for ln, pts, fill, halo in polylines:
-                draw.line(pts, fill=fill, width=ln["width"], joint="curve")
-            return img.reduce((1, ss)), x_start
-
-        def _show(self, pil, x_start: int) -> None:
-            from PIL import ImageTk
-
-            if self.photo is None or self.photo.width() != pil.width or self.photo.height() != pil.height:
-                self.photo = ImageTk.PhotoImage(pil)
-                self.canvas.itemconfig(self.img_id, image=self.photo)
-            else:
-                self.photo.paste(pil)
-            self.canvas.coords(self.img_id, x_start, 0)
-            self.loop_idx = -1
-
-        def _show_loop_frame(self, idx: int) -> None:
-            """Copy a pre-rendered frame into the displayed image (a C memcpy inside Tk, ~0.3 ms)."""
-            from PIL import Image, ImageTk
-
-            frame = self.loop[idx]
-            if self.photo is None or self.photo.width() != frame.width() or self.photo.height() != frame.height():
-                self.photo = ImageTk.PhotoImage(Image.new("RGB", (frame.width(), frame.height()), self.app.c("bg")))
-                self.canvas.itemconfig(self.img_id, image=self.photo)
-                self.canvas.coords(self.img_id, self.loop_x, self.loop_y)
-            elif self.loop_idx < 0:
-                self.canvas.coords(self.img_id, self.loop_x, self.loop_y)
-            self.photo.tk.call(str(self.photo), "copy", str(frame), "-to", 0, 0)
-            self.loop_idx = idx
-
-        # ------------------------------------------------------------ idle loop (pre-rendered)
-        def _ensure_loop(self, w: int) -> None:
-            key = (w, self.app.mode, self.h)
-            if self.loop is not None and self.loop_key == key:
-                return
-            if self._loop_job is not None:
-                if self._loop_job[0] == key:
-                    return
-                self._loop_job = None      # width or theme changed while rendering: start over
-            unique_fps = min(self.refresh_hz, 120)
-            colors = self._colors_for(0.25)
-            holder = {"frames": None, "x_start": 0, "y_start": 0, "n": 0}
-            budget = self.LOOP_BUDGET_MB * 1024 * 1024
-
-            def work() -> None:
-                from PIL import Image, ImageChops
-
-                # probe a few frames to find the rows the waves actually use, then size the loop to the budget
-                bg = self.app.c("bg")
-                top, bottom = self.h, 0
-                for i in range(8):
-                    pil, x_start = self._draw(i / 8 * self.LOOP_SECONDS, w, 0.25, 0.68, colors)
-                    bbox = ImageChops.difference(pil, Image.new("RGB", pil.size, bg)).getbbox()
-                    if bbox:
-                        top, bottom = min(top, bbox[1]), max(bottom, bbox[3])
-                top, bottom = max(0, top - 3), min(self.h, bottom + 3)
-                if bottom <= top:
-                    top, bottom = 0, self.h
-                rw = w - (int(self._left(w) * w) - 4)
-                per_frame = rw * (bottom - top) * 4
-                n = max(24, min(int(round(self.LOOP_SECONDS * unique_fps)), budget // max(1, per_frame)))
-                frames = []
-                for i in range(n):
-                    pil, x_start = self._draw(i / n * self.LOOP_SECONDS, w, 0.25, 0.68, colors)
-                    frames.append(pil.crop((0, top, pil.width, bottom)))
-                holder.update(frames=frames, x_start=x_start, y_start=top, n=n)
-
-            th = threading.Thread(target=work, daemon=True)
-            th.start()
-            self._loop_job = (key, th, holder, 0)
-
-        def _adopt_loop(self) -> None:
-            """Convert the rendered PIL frames into Tk images, a few per tick, then switch to playback."""
-            from PIL import ImageTk
-
-            key, th, holder, n = self._loop_job
-            if holder["frames"] is None:
-                return
-            pending = self._loop_pending
-            if pending is None or pending[0] != key:
-                pending = [key, [], holder["frames"], holder["x_start"], holder["y_start"]]
-                self._loop_pending = pending
-            done = pending[1]
-            frames = pending[2]
-            for _ in range(12):
-                if len(done) >= len(frames):
-                    break
-                done.append(ImageTk.PhotoImage(frames[len(done)]))
-            if len(done) >= len(frames):
-                self.loop, self.loop_key, self.loop_n = done, key, len(done)
-                self.loop_x, self.loop_y = pending[3], pending[4]
-                self.loop_idx = -1
-                self.stats["loop_mb"] = len(done) * frames[0].width * frames[0].height * 4 / 1048576
-                self.stats["loop_fps"] = len(done) / self.LOOP_SECONDS
-                self._loop_job = None
-                self._loop_pending = None
-
-        # ------------------------------------------------------------ main tick (paced to the display)
-        def _tick(self) -> None:
-            try:
-                now = time.perf_counter()
-                dt = now - self._last_tick
-                if dt < 0.4 * self.frame_dt:       # events that piled up while the main thread was busy
-                    return
-                dt = min(0.1, dt)
-                self._last_tick = now
-                self.visible = bool(self.app.winfo_viewable()) and self.app.state() != "iconic"
-                if not self.visible:
-                    return
-                tick0 = time.perf_counter()
-                w = max(200, self.canvas.winfo_width())
-                wall = time.time()
-                t = wall - self.t0
-                rate = 4.0 if self.energy < self.energy_target else 2.5
-                self.energy += (self.energy_target - self.energy) * (1 - math.exp(-rate * dt))
-                self._recolor()
-                left = self._left(w)
-                want = left + (1.0 - left) * (0.1 + 0.85 * self.progress) if self.busy else 0.68
-                self.crest += (want - self.crest) * (1 - math.exp(-1.8 * dt))
-                animate = bool(self.app.anim_var.get())
-                idle = (not self.busy and abs(self.energy - 0.25) < 0.02 and wall > self.celebrate_until
-                        and abs(self.crest - 0.68) < 0.01)
-                if idle and animate:
-                    self._ensure_loop(w)
-                    if self._loop_job is not None:
-                        self._adopt_loop()
-                    if self.loop is not None and self.loop_key == (w, self.app.mode, self.h):
-                        idx = int((t % self.LOOP_SECONDS) / self.LOOP_SECONDS * self.loop_n) % self.loop_n
-                        if idx != self.loop_idx:          # only touch Tk when the picture changes
-                            self._show_loop_frame(idx)
-                        self.stats["mode"] = "loop"
-                    else:
-                        pil, xs = self._draw(t, w, self.energy, self.crest, [(ln["fill"], ln["halo"]) for ln in self.lines])
-                        self._show(pil, xs)
-                        self.stats["mode"] = "live"
-                elif not animate and idle:
-                    if self.stats["mode"] != "static":      # one frozen frame
-                        pil, xs = self._draw(0.0, w, self.energy, self.crest, [(ln["fill"], ln["halo"]) for ln in self.lines])
-                        self._show(pil, xs)
-                        self.stats["mode"] = "static"
-                else:
-                    pil, xs = self._draw(t, w, self.energy, self.crest, [(ln["fill"], ln["halo"]) for ln in self.lines])
-                    self._show(pil, xs)
-                    self.stats["mode"] = "live"
-                mid = 0.56 * self.h
-                # a floating caption in osu! slang rides on the crest while generating
-                if self.busy:
-                    phrases = memes()
-                    if wall - self.caption_at > 2.6:
-                        self.caption_at = wall
-                        self.caption_idx = (self.caption_idx + 1) % len(phrases)
-                        self.canvas.itemconfig(self.caption_id, text=phrases[self.caption_idx])
-                    cx = min(w - 250 * self.s, max(left * w + 70 * self.s, self.crest * w))
-                    self.canvas.coords(self.caption_id, cx, mid - 34 * self.s + 3 * self.s * math.sin(t * 2.2))
-                elif wall < self.celebrate_until:
-                    cx = min(w - 250 * self.s, max(left * w + 70 * self.s, self.crest * w))
-                    self.canvas.coords(self.caption_id, cx, mid - 34 * self.s)
-                elif self.caption_idx >= 0:          # clear once; touching the item every frame forces redraws
-                    self.canvas.itemconfig(self.caption_id, text="")
-                    self.caption_idx = -1
-                self.stats["frame_ms"] = (time.perf_counter() - tick0) * 1000
-                self._fps_count += 1
-                if now - self._fps_t >= 1.0:
-                    self.stats["fps"] = self._fps_count / (now - self._fps_t)
-                    self._fps_count, self._fps_t = 0, now
-            except tk.TclError:
-                return
+                          border_color=PALETTE["border"])
+            self.lang_btn = ctk.CTkButton(btns, text_color=PALETTE["gold"], command=app.toggle_language, **btn_kw)
+            self.lang_btn.pack(side="left", padx=(0, 8))
+            self.theme_btn = ctk.CTkButton(btns, text_color=PALETTE["cyan"], command=app.toggle_theme, **btn_kw)
+            self.theme_btn.pack(side="left")
 
         def set_texts(self, title: str, subtitle: str) -> None:
-            self.canvas.itemconfig(self.title_id, text=title)
-            self.canvas.itemconfig(self.subtitle_id, text=subtitle)
+            self.title.configure(text=title)
+            self.subtitle.configure(text=subtitle)
 
     class App(ctk.CTk):
         def __init__(self) -> None:
@@ -548,10 +181,9 @@ def run_gui() -> int:
             self._progress_target = 0.0
             self._progress_shown = 0.0
             self._pulsing = False
-            self.anim_var = ctk.BooleanVar(value=self.settings.get("animations", True))
             self.font = ctk.CTkFont(family=_ui_font(), size=13)
             self.font_bold = ctk.CTkFont(family=_ui_font(), size=15, weight="bold")
-            self.font_title = ctk.CTkFont(family=_ui_font(), size=24, weight="bold")
+            self.font_title = ctk.CTkFont(family=_ui_font(), size=25, weight="bold")
             self.geometry(self.settings.get("geometry", "780x800"))
             self.minsize(660, 620)
             self.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -589,7 +221,7 @@ def run_gui() -> int:
             w["song.entry"].grid(row=1, column=0, sticky="ew", padx=(12, 6), pady=6)
             w["song.browse"] = ctk.CTkButton(song, width=110, font=self.font, command=self.browse_song)
             w["song.browse"].grid(row=1, column=1, padx=(0, 12), pady=6)
-            w["song.hint"] = ctk.CTkLabel(song, font=self.font, anchor="w", text_color=PALETTE["muted"])
+            w["song.hint"] = ctk.CTkLabel(song, font=self.font, anchor="w", justify="left", wraplength=980, text_color=PALETTE["muted"])
             w["song.hint"].grid(row=2, column=0, columnspan=2, sticky="w", padx=12, pady=(0, 8))
             if self.dnd_ok:
                 for target in (song, w["song.entry"], w["song.hint"]):
@@ -671,9 +303,7 @@ def run_gui() -> int:
             w["adv.engine.menu"] = ctk.CTkOptionMenu(adv, font=self.font, width=260, values=[], command=lambda _v: None)
             w["adv.engine.menu"].grid(row=4, column=1, columnspan=2, sticky="w", pady=4)
             w["adv.preview"] = ctk.CTkCheckBox(adv, variable=self.preview_var, font=self.font)
-            w["adv.preview"].grid(row=5, column=0, columnspan=2, sticky="w", padx=12, pady=(4, 10))
-            w["adv.anim"] = ctk.CTkCheckBox(adv, variable=self.anim_var, font=self.font)
-            w["adv.anim"].grid(row=5, column=2, columnspan=2, sticky="w", padx=12, pady=(4, 10))
+            w["adv.preview"].grid(row=5, column=0, columnspan=4, sticky="w", padx=12, pady=(4, 10))
             if self.advanced_open:
                 adv.grid(row=5, column=0, sticky="ew", padx=20, pady=(0, 6))
 
@@ -727,7 +357,7 @@ def run_gui() -> int:
             self.header.theme_btn.configure(text=tr("theme.light" if self.mode == "dark" else "theme.dark"))
             for key in ("song.section", "song.browse", "song.hint", "diff.section", "diff.hint", "out.section",
                         "out.folder", "out.browse", "out.open_osu", "adv.seed", "adv.bpm", "adv.offset",
-                        "adv.creator", "adv.star", "adv.quality", "adv.device", "adv.engine", "adv.preview", "adv.anim",
+                        "adv.creator", "adv.star", "adv.quality", "adv.device", "adv.engine", "adv.preview",
                         "models.download", "run.open_osz", "run.open_folder", "about"):
                 w[key].configure(text=tr(key))
             for name in PRESETS:
@@ -810,7 +440,6 @@ def run_gui() -> int:
         def toggle_theme(self) -> None:
             self.mode = "light" if self.mode == "dark" else "dark"
             ctk.set_appearance_mode(self.mode)
-            self.header.retheme()
             self.refresh_texts()
 
         def toggle_advanced(self) -> None:
@@ -883,8 +512,6 @@ def run_gui() -> int:
 
         def set_busy(self, busy: bool) -> None:
             self.busy = busy
-            if not busy:
-                self.header.set_state(False, 0.0)
             self.widgets["run.generate"].configure(state="disabled" if busy else "normal",
                                                    text=tr("run.running" if busy else "run.generate"))
             self.widgets["models.download"].configure(state="disabled" if busy else "normal")
@@ -900,8 +527,7 @@ def run_gui() -> int:
                 "open_osu": self.open_osu_var.get(), "seed": self.seed_var.get(), "bpm": self.bpm_var.get(),
                 "offset": self.offset_var.get(), "creator": self.creator_var.get(), "star": self.star_var.get(),
                 "quality": quality, "device": self.device_var.get(), "engine": engine,
-                "preview": self.preview_var.get(), "animations": self.anim_var.get(),
-                "advanced_open": self.advanced_open, "geometry": self.geometry(),
+                "preview": self.preview_var.get(), "advanced_open": self.advanced_open, "geometry": self.geometry(),
             }
 
         def start(self) -> None:
@@ -978,7 +604,6 @@ def run_gui() -> int:
                         self.log(item[1])
                     elif kind == "progress":
                         self.set_progress(item[1])
-                        self.header.set_state(True, item[1])
                         self.widgets["status"].configure(text=self.status_text(item[2]))
                     elif kind == "models":
                         self.set_busy(False)
@@ -998,7 +623,6 @@ def run_gui() -> int:
                             s = d.summary()
                             self.log(tr("result.diff", name=d.preset.name, objects=s["objects"], sliders=s["sliders"], nps=s["nps"]))
                         self._flash_done()
-                        self.header.celebrate()
                         if self.open_osu_var.get():
                             open_path(res.osz)
                     elif kind == "error":
@@ -1016,59 +640,14 @@ def run_gui() -> int:
 
         def on_close(self) -> None:
             try:
-                self.header.stop()
                 save_settings(self.collect_settings())
             except Exception:
                 pass
             self.destroy()
 
-    _high_res_timer(True)
-    try:
-        app = App()
-        app.mainloop()
-    finally:
-        _high_res_timer(False)
+    app = App()
+    app.mainloop()
     return 0
-
-
-def _display_refresh_hz() -> int:
-    """Refresh rate of the primary display (Windows), 60 elsewhere or on failure."""
-    if sys.platform != "win32":
-        return 60
-    try:
-        import ctypes
-        import ctypes.wintypes as wt
-
-        class DEVMODE(ctypes.Structure):
-            _fields_ = [("dmDeviceName", wt.WCHAR * 32), ("dmSpecVersion", wt.WORD), ("dmDriverVersion", wt.WORD),
-                        ("dmSize", wt.WORD), ("dmDriverExtra", wt.WORD), ("dmFields", wt.DWORD),
-                        ("dmPositionX", ctypes.c_long), ("dmPositionY", ctypes.c_long),
-                        ("dmDisplayOrientation", wt.DWORD), ("dmDisplayFixedOutput", wt.DWORD),
-                        ("dmColor", ctypes.c_short), ("dmDuplex", ctypes.c_short), ("dmYResolution", ctypes.c_short),
-                        ("dmTTOption", ctypes.c_short), ("dmCollate", ctypes.c_short), ("dmFormName", wt.WCHAR * 32),
-                        ("dmLogPixels", wt.WORD), ("dmBitsPerPel", wt.DWORD), ("dmPelsWidth", wt.DWORD),
-                        ("dmPelsHeight", wt.DWORD), ("dmDisplayFlags", wt.DWORD), ("dmDisplayFrequency", wt.DWORD)]
-
-        dm = DEVMODE()
-        dm.dmSize = ctypes.sizeof(DEVMODE)
-        if ctypes.windll.user32.EnumDisplaySettingsW(None, -1, ctypes.byref(dm)):
-            hz = int(dm.dmDisplayFrequency)
-            if 30 <= hz <= 480:
-                return hz
-    except Exception:
-        pass
-    return 60
-
-
-def _high_res_timer(enable: bool) -> None:
-    """1 ms scheduler resolution on Windows so Tk timers can pace a 120-240 Hz display."""
-    if sys.platform == "win32":
-        try:
-            import ctypes
-
-            (ctypes.windll.winmm.timeBeginPeriod if enable else ctypes.windll.winmm.timeEndPeriod)(1)
-        except Exception:
-            pass
 
 
 def _keys():
@@ -1091,8 +670,46 @@ def _system_is_chinese() -> bool:
         return False
 
 
+FONTS_DIR = ASSETS / "fonts"
+_FONT_FAMILY: Optional[str] = None
+
+
+def _register_fonts() -> Optional[str]:
+    """Load the bundled UI font for this process (Windows) and return its family name, else None."""
+    global _FONT_FAMILY
+    if _FONT_FAMILY is not None:
+        return _FONT_FAMILY or None
+    _FONT_FAMILY = ""
+    if sys.platform == "win32" and FONTS_DIR.is_dir():
+        try:
+            import ctypes
+
+            n = 0
+            for f in sorted(FONTS_DIR.glob("*.ttf")):
+                n += ctypes.windll.gdi32.AddFontResourceExW(str(f), 0x10, 0)   # FR_PRIVATE
+            if n:
+                _FONT_FAMILY = "AUTO-OSU Sans"
+        except Exception:
+            _FONT_FAMILY = ""
+    return _FONT_FAMILY or None
+
+
 def _ui_font() -> str:
-    return "Microsoft YaHei UI" if sys.platform == "win32" else "Helvetica"
+    fam = _register_fonts()
+    if fam:
+        return fam
+    if sys.platform == "win32":
+        try:
+            import tkinter.font as tkfont
+
+            fams = set(tkfont.families())
+            for cand in ("Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI"):
+                if cand in fams:
+                    return cand
+        except Exception:
+            pass
+        return "Segoe UI"
+    return "Helvetica"
 
 
 if __name__ == "__main__":
