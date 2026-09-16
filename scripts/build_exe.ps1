@@ -30,7 +30,7 @@ foreach ($m in @("rhythm_v0.pt", "coord_v0.pt")) {
     else { Write-Warning "models\$m missing: the app will offer to download it on first run" }
 }
 Copy-Item (Join-Path $root "README.md") $dist -Force
-Copy-Item (Join-Path $root "README.zh-CN.md") $dist -Force
+Copy-Item (Join-Path $root "README.en.md") $dist -Force
 Copy-Item (Join-Path $root "LICENSE") $dist -Force
 Write-Host "== dist ready: $dist"
 
