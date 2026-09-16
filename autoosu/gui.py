@@ -340,10 +340,15 @@ def run_gui() -> int:
             w["about"].grid(row=7, column=0, sticky="e", padx=24, pady=(0, 8))
 
         def _set_window_icon(self) -> None:
+            """Title-bar / taskbar icon: the bundled .ico (set after customtkinter installs its own)."""
+            ico = ASSETS / "icon.ico"
             try:
-                from PIL import Image, ImageTk
+                if ico.exists() and sys.platform == "win32":
+                    self.iconbitmap(str(ico))
+                    self.after(1000, lambda: self.iconbitmap(str(ico)))
+                elif AVATAR.exists():
+                    from PIL import Image, ImageTk
 
-                if AVATAR.exists():
                     self._icon_img = ImageTk.PhotoImage(Image.open(AVATAR).convert("RGBA").resize((64, 64), Image.LANCZOS))
                     self.iconphoto(True, self._icon_img)
             except Exception:

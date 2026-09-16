@@ -77,8 +77,10 @@ def main() -> None:
     ImageDraw.Draw(ring).ellipse((5, 5, 506, 506), outline=GOLD, width=12)
     ico_dir = ROOT / "assets"
     ico_dir.mkdir(exist_ok=True)
-    ring.save(ico_dir / "icon.ico", sizes=[(256, 256), (128, 128), (64, 64), (48, 48), (32, 32), (16, 16)])
+    sizes = [(256, 256), (128, 128), (64, 64), (48, 48), (32, 32), (16, 16)]
+    ring.save(ico_dir / "icon.ico", sizes=sizes)
     ring.save(ico_dir / "icon.png")
+    ring.save(out_png.with_name("icon.ico"), sizes=sizes)        # bundled copy for the window icon
     print(f"-> {out_png}\n-> {ico_dir / 'icon.ico'}")
 
 
