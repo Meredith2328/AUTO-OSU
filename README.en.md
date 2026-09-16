@@ -51,7 +51,8 @@ Input is normalised before it enters the pipeline, so the format hardly matters:
 
 - audio: mp3, ogg, wav, flac, m4a / aac, wma, opus, aiff, ape, alac …
 - video: mp4, mkv, webm, mov, avi … — the audio track is extracted automatically
-- the audio packed into the `.osz` is always something osu! can play (mp3 and ogg-vorbis are kept as they are, everything else becomes 192 kbps mp3)
+- the audio packed into the `.osz` is always something osu! can play: mp3 and ogg-vorbis are kept as they are; anything else becomes mp3 at a bit rate that follows the source (lossless -> 320 kbps, lossy -> the source rate rounded up, 192 kbps minimum)
+- embedded cover art becomes the beatmap background; for a video without cover art a frame is grabbed. Title and artist come from the tags
 
 ffmpeg ships with the program; nothing to install.
 
@@ -60,7 +61,7 @@ ffmpeg ships with the program; nothing to install.
 | Area | What it does |
 | --- | --- |
 | Song | Drag and drop, or Browse. |
-| Difficulties | Easy / Normal / Hard / Insane, any combination, all packed into one `.osz`. Default Normal + Hard. |
+| Difficulties | Easy / Normal / Hard / Insane, any combination, all packed into one `.osz`. Default Hard + Insane. |
 | Output | Target folder; "Import into osu! when done" opens the `.osz`, same as double-clicking it. |
 | Models | Shows whether the models are present; one-click download if not (checksums verified). |
 | Top right | Chinese / English, light / dark. Settings, last song and folder are remembered. |
@@ -113,7 +114,7 @@ pip install -e .[gui]
 # NVIDIA GPU (optional): pip install torch --index-url https://download.pytorch.org/whl/cu130
 python -m autoosu --download                          # fetch the models once (~320 MB)
 python -m autoosu                                     # open the window
-python -m autoosu "song.mp3" -d Normal Hard -o out    # command line
+python -m autoosu "song.mp3" -d Hard Insane -o out    # command line
 ```
 
 Python 3.10 or newer. This is also how to run it on macOS / Linux; the exe is Windows only.
@@ -123,7 +124,7 @@ Python 3.10 or newer. This is also how to run it on macOS / Linux; the exe is Wi
 - **The rhythm sits on the drums.** On the validation set the rhythm model reaches an onset F1 of 0.96 against the human map; two human difficulties of the same song agree at only 0.74.
 - **Placement looks human.** The coordinate model generates coordinates from pure noise; jumps, streams and slider shapes are learned. Every slider is fitted so it stays on screen.
 - **What is still missing.** One red line per song; slider length is not a model input yet, so long sliders on fast songs are occasionally shortened (a green line keeps the timing right);
-  hitsounds are simple drum-based whistle / clap / finish; no background or storyboard. Check the map in the editor before submitting it anywhere.
+  hitsounds are simple drum-based whistle / clap / finish; no storyboard. Check the map in the editor before submitting it anywhere.
 
 ## How it works
 

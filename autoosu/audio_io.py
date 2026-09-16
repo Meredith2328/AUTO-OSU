@@ -6,7 +6,7 @@ Two decoders, tried in order:
    (m4a/aac, wma, ape, alac, opus, and the audio track of mp4/mkv/webm/mov/avi ...).
 
 osu! itself only plays mp3 and ogg/vorbis, so `prepare_for_osu` copies those through and transcodes
-anything else to a 192 kbps mp3.
+anything else to mp3 at a bit rate that keeps the source quality (192-320 kbps, lossless -> 320).
 """
 from __future__ import annotations
 
@@ -102,10 +102,72 @@ def probe_duration(path: str | Path) -> Optional[float]:
         return None
 
 
-def transcode_mp3(src: Path, dst: Path, bitrate: str = "192k") -> Path:
-    """Any input -> mp3 (44.1 kHz). ffmpeg when available, else libsndfile for the formats it reads."""
+LOSSLESS_CODECS = ("flac", "pcm", "alac", "ape", "wavpack", "tta", "mlp", "truehd", "dsd")
+
+
+def probe_stream(path: Path) -> dict:
+    """Codec name and bit rate (kb/s) of the first audio stream, from ffmpeg's banner; {} when unknown."""
+    import re
+
+    ffmpeg = find_ffmpeg()
+    if not ffmpeg:
+        return {}
+    try:
+        proc = subprocess.run([ffmpeg, "-hide_banner", "-nostdin", "-i", str(path)], capture_output=True,
+                              creationflags=_NO_WINDOW, timeout=30)
+    except Exception:
+        return {}
+    text = proc.stderr.decode("utf-8", "replace")
+    info: dict = {}
+    m = re.search(r"Stream #\d+:\d+(?:\[[^\]]*\])?(?:\([^)]*\))?: Audio: (\w+)([^\n]*)", text)
+    if m:
+        info["codec"] = m.group(1).lower()
+        kb = re.search(r"(\d+) kb/s", m.group(2))
+        if kb:
+            info["kbps"] = int(kb.group(1))
+    total = re.search(r"Duration: (\d+):(\d+):([\d.]+).*?bitrate: (\d+) kb/s", text)
+    if total:
+        h, mi, se, kb = total.groups()
+        info["duration"] = int(h) * 3600 + int(mi) * 60 + float(se)
+        info.setdefault("kbps_total", int(kb))
+    return info
+
+
+def choose_bitrate(src: Path) -> str:
+    """mp3 bit rate that does not throw away quality the source has: lossless -> 320k,
+    lossy -> the source rate rounded up to the next mp3 step (192k floor, 320k ceiling)."""
+    info = probe_stream(src)
+    codec = info.get("codec", "")
+    if any(codec.startswith(c) for c in LOSSLESS_CODECS):
+        return "320k"
+    kbps = info.get("kbps") or (info.get("kbps_total") if src.suffix.lower() not in VIDEO_EXTS else None)
+    if not kbps:
+        return "192k"
+    for step in (192, 224, 256, 320):
+        if kbps <= step:
+            return f"{step}k"
+    return "320k"
+
+
+def extract_video_frame(src: Path, dst: Path, at_fraction: float = 0.3) -> Optional[Path]:
+    """One frame of a video file (for the beatmap background), or None when not possible."""
+    ffmpeg = find_ffmpeg()
+    if not ffmpeg:
+        return None
+    info = probe_stream(src)
+    at = max(0.0, float(info.get("duration", 60.0)) * at_fraction)
+    cmd = [ffmpeg, "-y", "-v", "error", "-nostdin", "-ss", f"{at:.2f}", "-i", str(src), "-frames:v", "1",
+           "-vf", "scale='min(1920,iw)':-2", "-q:v", "3", str(dst)]
+    proc = subprocess.run(cmd, capture_output=True, creationflags=_NO_WINDOW)
+    return dst if proc.returncode == 0 and dst.exists() and dst.stat().st_size > 0 else None
+
+
+def transcode_mp3(src: Path, dst: Path, bitrate: Optional[str] = None) -> Path:
+    """Any input -> mp3 (44.1 kHz). ffmpeg when available, else libsndfile for the formats it reads.
+    bitrate None = chosen from the source quality (see choose_bitrate)."""
     ffmpeg = find_ffmpeg()
     dst.parent.mkdir(parents=True, exist_ok=True)
+    bitrate = bitrate or choose_bitrate(src)
     if ffmpeg:
         cmd = [ffmpeg, "-y", "-v", "error", "-nostdin", "-i", str(src), "-vn", "-map", "0:a:0",
                "-codec:a", "libmp3lame", "-b:a", bitrate, "-ar", "44100", str(dst)]

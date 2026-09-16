@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 import zipfile
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 from .audio_io import find_ffmpeg, prepare_for_osu, transcode_mp3  # noqa: F401  (re-exported)
 from .beatmap import Beatmap
@@ -15,6 +15,74 @@ _ILLEGAL = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 def sanitize(name: str) -> str:
     name = _ILLEGAL.sub("", name).strip().rstrip(".")
     return name or "untitled"
+
+
+COVER_MIME = {"image/jpeg": ".jpg", "image/jpg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
+
+
+def extract_cover(path: Path) -> Optional[Tuple[bytes, str]]:
+    """Embedded cover art of an audio file as (bytes, extension), or None."""
+    try:
+        import mutagen
+        from mutagen.flac import Picture
+
+        f = mutagen.File(str(path))
+        if f is None:
+            return None
+        pics = []
+        if hasattr(f, "pictures") and f.pictures:                       # FLAC
+            pics = [(p.data, p.mime) for p in f.pictures]
+        elif f.tags is not None:
+            tags = f.tags
+            if hasattr(tags, "getall"):                                   # ID3 (mp3, aiff, wav)
+                pics = [(a.data, a.mime) for a in tags.getall("APIC")]
+            elif "covr" in tags:                                          # MP4 / m4a
+                from mutagen.mp4 import MP4Cover
+
+                for c in tags["covr"]:
+                    pics.append((bytes(c), "image/png" if getattr(c, "imageformat", None) == MP4Cover.FORMAT_PNG else "image/jpeg"))
+            elif "metadata_block_picture" in tags:                        # ogg vorbis / opus
+                import base64
+
+                for b64 in tags["metadata_block_picture"]:
+                    p = Picture(base64.b64decode(b64))
+                    pics.append((p.data, p.mime))
+            elif "WM/Picture" in tags:                                    # wma
+                for v in tags["WM/Picture"]:
+                    raw = bytes(v.value) if hasattr(v, "value") else bytes(v)
+                    pics.append((raw, "image/jpeg"))
+        for data, mime in pics:
+            if data and len(data) > 1000:
+                ext = COVER_MIME.get((mime or "").lower())
+                if ext is None:
+                    ext = ".png" if data[:8] == b"\x89PNG\r\n\x1a\n" else ".jpg"
+                return data, ext
+    except Exception:
+        return None
+    return None
+
+
+def prepare_background(data: bytes, ext: str, workdir: Path, max_side: int = 1920) -> Optional[Path]:
+    """Write the cover as bg.jpg / bg.png for osu!, downscaling very large images."""
+    try:
+        from io import BytesIO
+
+        from PIL import Image
+
+        img = Image.open(BytesIO(data))
+        img.load()
+        if max(img.size) > max_side:
+            img.thumbnail((max_side, max_side), Image.LANCZOS)
+            ext = ".jpg" if img.mode in ("RGB", "L") else ".png"
+        workdir.mkdir(parents=True, exist_ok=True)
+        out = workdir / f"bg{ext}"
+        if ext == ".jpg":
+            img.convert("RGB").save(out, quality=90)
+        else:
+            img.save(out)
+        return out
+    except Exception:
+        return None
 
 
 def read_metadata(path: Path) -> Tuple[str, str]:
@@ -48,12 +116,14 @@ def prepare_audio(src: Path, workdir: Path) -> Path:
     return prepare_for_osu(src, workdir)
 
 
-def write_osz(beatmaps: List[Beatmap], audio: Path, out_dir: Path) -> Path:
+def write_osz(beatmaps: List[Beatmap], audio: Path, out_dir: Path, extra_files: Sequence[Path] = ()) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     first = beatmaps[0]
     osz = out_dir / sanitize(f"{first.artist} - {first.title} ({first.creator}).osz")
     with zipfile.ZipFile(osz, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.write(audio, audio.name)
+        for extra in extra_files:
+            zf.write(extra, Path(extra).name)
         for bm in beatmaps:
             zf.writestr(sanitize(bm.osu_filename()), bm.to_osu().encode("utf-8"))
     return osz

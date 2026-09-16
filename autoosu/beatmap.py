@@ -131,6 +131,7 @@ class Beatmap:
     distance_spacing: float = 1.0
     preview_time: int = -1
     stack_leniency: float = 0.7
+    background: str = ""                 # image file name inside the .osz, "" = none
     timing_points: List[TimingPoint] = field(default_factory=list)
     breaks: List[Break] = field(default_factory=list)
     hit_objects: List[HitObject] = field(default_factory=list)
@@ -182,6 +183,8 @@ class Beatmap:
         a("")
         a("[Events]")
         a("//Background and Video events")
+        if self.background:
+            a(f'0,0,"{self.background}",0,0')
         a("//Break Periods")
         for b in self.breaks:
             a(f"2,{b.start},{b.end}")

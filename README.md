@@ -49,7 +49,8 @@ Windows 10 / 11，64 位。
 
 - 音频：mp3、ogg、wav、flac、m4a / aac、wma、opus、aiff、ape、alac 等；
 - 视频：mp4、mkv、webm、mov、avi 等，自动抽出音轨；
-- 打进 `.osz` 的音频统一为 osu! 能播的 mp3（mp3 和 ogg-vorbis 原样保留，其余转 192 kbps mp3）。
+- 打进 `.osz` 的音频保证 osu! 能播：mp3 和 ogg-vorbis 原样保留；其他格式转 mp3，码率跟着源走（无损源 320 kbps，有损源按原码率向上取整，192 kbps 起）。
+- 源文件里的封面图会直接当谱面背景；视频源没有封面就截一帧。歌名、歌手也从标签里读。
 
 程序自带 ffmpeg，不用另外安装。
 
@@ -58,7 +59,7 @@ Windows 10 / 11，64 位。
 | 区域 | 说明 |
 | --- | --- |
 | 歌曲 | 拖放或点「浏览」选文件。 |
-| 难度 | Easy / Normal / Hard / Insane 可多选，全部打进同一个 `.osz`。默认 Normal + Hard。 |
+| 难度 | Easy / Normal / Hard / Insane 可多选，全部打进同一个 `.osz`。默认 Hard + Insane。 |
 | 输出 | 保存目录；「生成后自动导入 osu!」会直接打开 `.osz`，等于双击它。 |
 | 模型 | 显示模型是否就绪；缺失时一键下载（自动校验）。 |
 | 右上角 | 中 / 英切换，亮 / 暗切换。设置、上次的歌和目录都会记住。 |
@@ -111,7 +112,7 @@ pip install -e .[gui]
 # 有 NVIDIA 显卡（可选）：pip install torch --index-url https://download.pytorch.org/whl/cu130
 python -m autoosu --download                          # 第一次下载模型（约 320 MB）
 python -m autoosu                                     # 打开图形界面
-python -m autoosu "歌曲.mp3" -d Normal Hard -o out    # 命令行
+python -m autoosu "歌曲.mp3" -d Hard Insane -o out    # 命令行
 ```
 
 Python 3.10 及以上。macOS / Linux 用这种方式运行，exe 只提供 Windows 版。
@@ -121,7 +122,7 @@ Python 3.10 及以上。macOS / Linux 用这种方式运行，exe 只提供 Wind
 - **节奏贴鼓点。** 节奏模型在验证集上与人类谱面的 onset F1 达到 0.96；作为参照，同一首歌两个人类难度之间只有 0.74。
 - **摆放像人写的。** 坐标模型从纯噪声生成坐标，跳、串、滑条形状都是学来的；每条滑条都经过贴合检查，不会出屏幕。
 - **还差的地方。** 一条红线；滑条长度不是模型输入，快歌上的长滑条偶尔被缩短（会补绿线保证时长正确）；
-  打击音效只有基于鼓的简单 whistle / clap / finish；没有背景图和 storyboard。投稿之前请在编辑器里过一遍。
+  打击音效只有基于鼓的简单 whistle / clap / finish；没有 storyboard。投稿之前请在编辑器里过一遍。
 
 ## 原理
 

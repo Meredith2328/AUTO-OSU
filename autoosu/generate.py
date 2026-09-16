@@ -10,9 +10,10 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 from .audio import AudioAnalysis, analyze, load_audio
+from .audio_io import VIDEO_EXTS
 from .beatmap import Beatmap, Break, HitObject, Slider, Spinner, TimingPoint
 from .difficulty import DifficultyPreset, get_preset
-from .package import prepare_audio, read_metadata, write_osz
+from .package import extract_cover, prepare_audio, prepare_background, read_metadata, write_osz
 from .placement import place
 from .rhythm import RhythmEvent, Sections, analyse_sections, build_events
 from .timing import Timing, estimate_timing
@@ -161,6 +162,16 @@ def generate(audio_path: str | Path, difficulties: List[str], out_dir: str | Pat
     title, artist = title or meta_title, artist or meta_artist
     workdir = out_dir / ".work"
     audio_file = prepare_audio(audio_path, workdir)
+    background = None
+    cover = extract_cover(audio_path)
+    if cover:
+        background = prepare_background(cover[0], cover[1], workdir)
+    elif audio_path.suffix.lower() in VIDEO_EXTS:
+        from .audio_io import extract_video_frame
+
+        background = extract_video_frame(audio_path, workdir / "bg.jpg")
+    if background:
+        log(f"      background: {background.name} ({'cover art' if cover else 'video frame'})")
     sections = analyse_sections(analysis, timing)
     kiai = sections.kiai
     log(f"      {len(kiai)} kiai section(s): " + ", ".join(f"{a / 1000:.0f}-{b / 1000:.0f}s" for a, b in kiai))
@@ -214,6 +225,8 @@ def generate(audio_path: str | Path, difficulties: List[str], out_dir: str | Pat
             objects = place(events, preset, timing, rng, sv_sections)
         bm = build_beatmap(preset, timing, objects, kiai, audio_file.name, title, artist, creator, osu_shift_ms,
                            sv_overrides=overrides)
+        if background:
+            bm.background = background.name
         res = DiffResult(preset, events, bm)
         diffs.append(res)
         s = res.summary()
@@ -222,7 +235,7 @@ def generate(audio_path: str | Path, difficulties: List[str], out_dir: str | Pat
             f"{s['nps']:.2f} obj/s" + (f", {len(overrides)} slider(s) shortened" if overrides else ""))
 
     report(0.97, "package")
-    osz = write_osz([d.beatmap for d in diffs], audio_file, out_dir)
+    osz = write_osz([d.beatmap for d in diffs], audio_file, out_dir, extra_files=[background] if background else ())
     report(1.0, "done")
     return GenerateResult(osz=osz, audio_file=audio_file, timing=timing, analysis=analysis, diffs=diffs,
                           elapsed_s=_time.perf_counter() - t0, osu_shift_ms=osu_shift_ms, device=dev)

@@ -60,6 +60,9 @@ def blend(a: str, b: str, t: float) -> str:
 
 
 def settings_path() -> Path:
+    override = os.environ.get("AUTOOSU_SETTINGS")          # tests / screenshots keep their own file
+    if override:
+        return Path(override)
     base = Path(os.environ.get("APPDATA") or Path.home())
     return base / "AUTO-OSU" / "settings.json"
 
@@ -236,7 +239,7 @@ def run_gui() -> int:
             diff.grid(row=2, column=0, sticky="ew", padx=20, pady=6)
             w["diff.section"] = ctk.CTkLabel(diff, font=self.font_bold, anchor="w")
             w["diff.section"].grid(row=0, column=0, columnspan=4, sticky="w", padx=12, pady=(8, 0))
-            chosen = set(self.settings.get("difficulties", ["Normal", "Hard"]))
+            chosen = set(self.settings.get("difficulties", ["Hard", "Insane"]))
             self.diff_vars = {}
             for i, name in enumerate(PRESETS):
                 var = ctk.BooleanVar(value=name in chosen)
