@@ -78,8 +78,22 @@ STRINGS: Dict[str, Dict[str, str]] = {
                       "en": "The AI engine needs the models; download them or switch to rules-only in Advanced"},
     "err.file_missing": {"zh": "文件不存在：{path}", "en": "File not found: {path}"},
     "lang.toggle": {"zh": "English", "en": "中文"},
-    "about": {"zh": "kanzei 出品 · 开源 github.com/kanze1/AUTO-OSU", "en": "Made by kanzei · open source github.com/kanze1/AUTO-OSU"},
+    "theme.light": {"zh": "☀ 亮色", "en": "☀ Light"},
+    "theme.dark": {"zh": "☾ 暗色", "en": "☾ Dark"},
+    "about": {"zh": "kanzei · github.com/kanze1/AUTO-OSU", "en": "Made by kanzei · github.com/kanze1/AUTO-OSU"},
 }
+
+
+MEMES = {
+    "zh": ["少女祈祷中……", "燃起来了！", "全弹发射！", "计划通り", "目标：Full Combo", "这就是命运石之门的选择",
+           "変身！", "打起精神来！", "谱面，出来吧！", "El Psy Kongroo", "少女折寿中……", "神圣的一击"],
+    "en": ["girls are praying…", "moe moe kyun!", "just as planned", "aim for the Full Combo", "henshin!",
+           "El Psy Kongroo", "ganbatte!", "beatmap, come forth!", "please wait warmly", "a holy strike"],
+}
+
+
+def memes() -> list:
+    return MEMES.get(_current) or MEMES["en"]
 
 
 def set_language(lang: str) -> None:

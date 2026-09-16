@@ -7,6 +7,14 @@
 
 ![AUTO-OSU 界面](docs/screenshot_zh.png)
 
+<details><summary>亮色主题 / English，以及生成中的顶部脉冲</summary>
+
+![亮色主题](docs/screenshot_en.png)
+
+![生成中](docs/screenshot_busy.png)
+
+</details>
+
 ## 下载即用（Windows，免安装）
 
 1. 到 [Releases](https://github.com/kanze1/AUTO-OSU/releases) 下载 `AUTO-OSU-<版本>-win64-cpu.zip`，解压到任意位置。
@@ -17,7 +25,7 @@
 压缩包里已经带了两个训练好的模型（约 320 MB）；如果缺失，窗口里有一键下载。
 不需要显卡：一首 3 分钟的歌在现代 CPU 上约 1 分钟，NVIDIA 显卡上约 15 秒（用 `-cuda` 包或 Python 安装方式）。
 
-界面中英双语，右上角按钮切换；默认跟随系统语言。
+界面中英双语、亮色/暗色两套（右上角按钮切换）；默认跟随系统语言和主题。
 
 ## Python 安装
 

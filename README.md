@@ -7,6 +7,14 @@ want, press *Generate*, and an `.osz` opens in osu! a minute later.
 
 ![AUTO-OSU window](docs/screenshot_en.png)
 
+<details><summary>Dark theme / Chinese, and the header while generating</summary>
+
+![dark theme](docs/screenshot_zh.png)
+
+![generating](docs/screenshot_busy.png)
+
+</details>
+
 ## Download and run (Windows, no install)
 
 1. Grab `AUTO-OSU-<version>-win64-cpu.zip` from the [releases page](https://github.com/kanze1/AUTO-OSU/releases) and unzip it anywhere.
@@ -18,7 +26,7 @@ The zip already contains the two trained models (~320 MB). If they are missing, 
 one-click download. A GPU is not required: a 3-minute song takes about a minute on a modern CPU
 and about 15 s on an NVIDIA GPU (use the `-cuda` zip or the Python install for GPU support).
 
-The interface is in Chinese or English (button in the top right); it follows your system language.
+The interface is in Chinese or English and has light and dark looks (buttons in the top right); it follows your system language and theme.
 
 ## Python install
 
