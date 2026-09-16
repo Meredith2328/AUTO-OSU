@@ -3,3 +3,5 @@
 *.ps1 text eol=crlf
 *.png binary
 *.pt binary
+coord/osu_diffusion/** linguist-vendored
+autoosu/ml/coord/** linguist-vendored
