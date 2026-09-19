@@ -35,14 +35,14 @@ AVATAR = ASSETS / "avatar.png"          # kanzei's OC; header avatar + window ic
 
 Pair = Tuple[str, str]                  # (light, dark)
 PALETTE: Dict[str, Pair] = {
-    "bg": ("#f3f3f5", "#0f0f11"),        # neutral paper / graphite black
-    "panel": ("#ffffff", "#18181b"),
+    "bg": ("#f4f3f0", "#0e1218"),
+    "panel": ("#ffffff", "#171c24"),
     "inner": ("#e9e9ee", "#202024"),
     "border": ("#d6d6dc", "#2c2c32"),
     "text": ("#1c1c22", "#ecebe6"),
     "muted": ("#6f6f7a", "#8e8e98"),
-    "gold": ("#d99a2b", "#e6a93c"),      # amber eyes
-    "gold_hover": ("#bf8420", "#cf9530"),
+    "gold": ("#e58a14", "#ffa329"),
+    "gold_hover": ("#ca7510", "#e28a1d"),
     "cyan": ("#2b8fe6", "#4fb8ff"),      # cheek glow
     "warm": ("#e0a985", "#f2c9a0"),      # back-light on skin
     "warn": ("#b3541e", "#f0a060"),
@@ -119,7 +119,7 @@ def _avatar_image(size: int):
         return None
 
 
-def run_gui() -> int:
+def create_app():
     import customtkinter as ctk
 
     try:
@@ -131,35 +131,7 @@ def run_gui() -> int:
     ctk.set_default_color_theme(str(theme) if theme.exists() else "blue")
     ctk.set_appearance_mode("system")
 
-    class Header:
-        """Static banner: avatar (when assets/avatar.png exists), title, subtitle and the two toggles."""
-
-        def __init__(self, app: "App", master) -> None:
-            self.app = app
-            self.frame = ctk.CTkFrame(master, fg_color="transparent")
-            self.frame.grid(row=0, column=0, sticky="ew", padx=20, pady=(14, 4))
-            self.frame.grid_columnconfigure(1, weight=1)
-            img = _avatar_image(64)
-            self._avatar = None
-            if img is not None:
-                self._avatar = ctk.CTkImage(light_image=img, dark_image=img, size=(64, 64))
-                ctk.CTkLabel(self.frame, image=self._avatar, text="").grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 14))
-            self.title = ctk.CTkLabel(self.frame, font=app.font_title, anchor="w", text_color=PALETTE["gold"])
-            self.title.grid(row=0, column=1, sticky="sw", pady=(0, 1))
-            self.subtitle = ctk.CTkLabel(self.frame, font=app.font, anchor="w", text_color=PALETTE["muted"])
-            self.subtitle.grid(row=1, column=1, sticky="nw", pady=(1, 0))
-            btns = ctk.CTkFrame(self.frame, fg_color="transparent")
-            btns.grid(row=0, column=2, rowspan=2, sticky="ne")
-            btn_kw = dict(width=92, height=30, font=app.font, fg_color="transparent", border_width=1,
-                          border_color=PALETTE["border"])
-            self.lang_btn = ctk.CTkButton(btns, text_color=PALETTE["gold"], command=app.toggle_language, **btn_kw)
-            self.lang_btn.pack(side="left", padx=(0, 8))
-            self.theme_btn = ctk.CTkButton(btns, text_color=PALETTE["cyan"], command=app.toggle_theme, **btn_kw)
-            self.theme_btn.pack(side="left")
-
-        def set_texts(self, title: str, subtitle: str) -> None:
-            self.title.configure(text=title)
-            self.subtitle.configure(text=subtitle)
+    from .gui_layout import build_workspace
 
     class App(ctk.CTk):
         def __init__(self) -> None:
@@ -173,12 +145,29 @@ def run_gui() -> int:
                     self.dnd_ok = False
             self.settings = load_settings()
             set_language(self.settings.get("language", "zh" if _system_is_chinese() else "en"))
-            mode = self.settings.get("appearance") or ctk.get_appearance_mode().lower()
+            mode = self.settings.get("appearance") or "dark"
             self.mode = mode if mode in ("light", "dark") else "dark"
             ctk.set_appearance_mode(self.mode)
             self.widgets: Dict[str, object] = {}
             self.q: "queue.Queue" = queue.Queue()
             self.busy = False
+            self.active_batch = False
+            self.cancel_event = threading.Event()
+            self.cuda_status = None
+            self.cuda_checking = False
+            self.managed_python = None
+            self.runtime_installing = False
+            self.runtime_cancel = threading.Event()
+            self.jobs = []
+            self.job_states = {}
+            self.scan_token = 0
+            self._scan_after = None
+            self._closing = False
+            self._open_after = False
+            self.current_file = ""
+            self.current_index = 0
+            self.current_total = 0
+            self.last_output_dir = None
             self.last_osz: Optional[Path] = None
             self.advanced_open = bool(self.settings.get("advanced_open", False))
             self._progress_target = 0.0
@@ -187,8 +176,8 @@ def run_gui() -> int:
             self.font = ctk.CTkFont(family=_ui_font(), size=13)
             self.font_bold = ctk.CTkFont(family=_ui_font(), size=15, weight="bold")
             self.font_title = ctk.CTkFont(family=_ui_font(), size=25, weight="bold")
-            self.geometry(self.settings.get("geometry", "780x800"))
-            self.minsize(660, 620)
+            self.geometry(self.settings.get("geometry", "1060x840"))
+            self.minsize(940, 670)
             self.protocol("WM_DELETE_WINDOW", self.on_close)
             try:
                 self.attributes("-alpha", 0.0)
@@ -201,146 +190,15 @@ def run_gui() -> int:
             self.after(30, self._animate_progress)
             self.after(60, self._pulse)
             self.after(40, self._fade_in)
+            self.after(120, self.check_cuda)
+            self.after(150, self.schedule_scan)
 
         def c(self, key: str) -> str:
             return PALETTE[key][0 if self.mode == "light" else 1]
 
         # ------------------------------------------------------------------ layout
         def build(self) -> None:
-            w = self.widgets
-            self.grid_columnconfigure(0, weight=1)
-            self.grid_rowconfigure(6, weight=1)
-            self.header = Header(self, self)
-            self.after(400, self._set_window_icon)
-
-            # song
-            song = ctk.CTkFrame(self)
-            song.grid(row=1, column=0, sticky="ew", padx=20, pady=6)
-            song.grid_columnconfigure(0, weight=1)
-            w["song.section"] = ctk.CTkLabel(song, font=self.font_bold, anchor="w")
-            w["song.section"].grid(row=0, column=0, sticky="w", padx=12, pady=(8, 0))
-            self.song_var = ctk.StringVar(value=self.settings.get("song", ""))
-            w["song.entry"] = ctk.CTkEntry(song, textvariable=self.song_var, font=self.font, height=34)
-            w["song.entry"].grid(row=1, column=0, sticky="ew", padx=(12, 6), pady=6)
-            w["song.browse"] = ctk.CTkButton(song, width=110, font=self.font, command=self.browse_song)
-            w["song.browse"].grid(row=1, column=1, padx=(0, 12), pady=6)
-            w["song.hint"] = ctk.CTkLabel(song, font=self.font, anchor="w", justify="left", wraplength=980, text_color=PALETTE["muted"])
-            w["song.hint"].grid(row=2, column=0, columnspan=2, sticky="w", padx=12, pady=(0, 8))
-            if self.dnd_ok:
-                for target in (song, w["song.entry"], w["song.hint"]):
-                    try:
-                        target.drop_target_register(DND_FILES)
-                        target.dnd_bind("<<Drop>>", self.on_drop)
-                    except Exception:
-                        pass
-
-            # difficulties
-            diff = ctk.CTkFrame(self)
-            diff.grid(row=2, column=0, sticky="ew", padx=20, pady=6)
-            w["diff.section"] = ctk.CTkLabel(diff, font=self.font_bold, anchor="w")
-            w["diff.section"].grid(row=0, column=0, columnspan=4, sticky="w", padx=12, pady=(8, 0))
-            chosen = set(self.settings.get("difficulties", ["Hard", "Insane"]))
-            self.diff_vars = {}
-            for i, name in enumerate(PRESETS):
-                var = ctk.BooleanVar(value=name in chosen)
-                self.diff_vars[name] = var
-                w[f"diff.{name}"] = ctk.CTkCheckBox(diff, variable=var, font=self.font)
-                w[f"diff.{name}"].grid(row=1, column=i, sticky="w", padx=12, pady=6)
-            w["diff.hint"] = ctk.CTkLabel(diff, font=self.font, anchor="w", text_color=PALETTE["muted"])
-            w["diff.hint"].grid(row=2, column=0, columnspan=4, sticky="w", padx=12, pady=(0, 8))
-
-            # output
-            out = ctk.CTkFrame(self)
-            out.grid(row=3, column=0, sticky="ew", padx=20, pady=6)
-            out.grid_columnconfigure(1, weight=1)
-            w["out.section"] = ctk.CTkLabel(out, font=self.font_bold, anchor="w")
-            w["out.section"].grid(row=0, column=0, columnspan=3, sticky="w", padx=12, pady=(8, 0))
-            w["out.folder"] = ctk.CTkLabel(out, font=self.font, anchor="w")
-            w["out.folder"].grid(row=1, column=0, sticky="w", padx=(12, 6), pady=6)
-            self.out_var = ctk.StringVar(value=self.settings.get("out_dir", str(app_root() / "output")))
-            w["out.entry"] = ctk.CTkEntry(out, textvariable=self.out_var, font=self.font, height=34)
-            w["out.entry"].grid(row=1, column=1, sticky="ew", pady=6)
-            w["out.browse"] = ctk.CTkButton(out, width=110, font=self.font, command=self.browse_out)
-            w["out.browse"].grid(row=1, column=2, padx=(6, 12), pady=6)
-            self.open_osu_var = ctk.BooleanVar(value=self.settings.get("open_osu", True))
-            w["out.open_osu"] = ctk.CTkCheckBox(out, variable=self.open_osu_var, font=self.font)
-            w["out.open_osu"].grid(row=2, column=0, columnspan=3, sticky="w", padx=12, pady=(0, 8))
-
-            # advanced (collapsible)
-            w["adv.toggle"] = ctk.CTkButton(self, fg_color="transparent", anchor="w", font=self.font,
-                                            text_color=PALETTE["cyan"], hover=False, command=self.toggle_advanced)
-            w["adv.toggle"].grid(row=4, column=0, sticky="w", padx=20, pady=(4, 0))
-            adv = ctk.CTkFrame(self)
-            self.adv_frame = adv
-            adv.grid_columnconfigure((1, 3), weight=1)
-            s = self.settings
-            self.seed_var = ctk.StringVar(value=str(s.get("seed", 0)))
-            self.bpm_var = ctk.StringVar(value=s.get("bpm", ""))
-            self.offset_var = ctk.StringVar(value=s.get("offset", ""))
-            self.creator_var = ctk.StringVar(value=s.get("creator", "AUTO-OSU"))
-            self.star_var = ctk.StringVar(value=s.get("star", ""))
-            self.quality_var = ctk.StringVar(value=s.get("quality", "normal"))
-            self.device_var = ctk.StringVar(value=s.get("device", "auto"))
-            self.engine_var = ctk.StringVar(value=s.get("engine", "ml"))
-            self.preview_var = ctk.BooleanVar(value=s.get("preview", False))
-            rows = [("adv.seed", self.seed_var), ("adv.bpm", self.bpm_var), ("adv.offset", self.offset_var),
-                    ("adv.creator", self.creator_var), ("adv.star", self.star_var)]
-            for i, (key, var) in enumerate(rows):
-                r, c = divmod(i, 2)
-                w[key] = ctk.CTkLabel(adv, font=self.font, anchor="w")
-                w[key].grid(row=r, column=2 * c, sticky="w", padx=(12, 6), pady=4)
-                ctk.CTkEntry(adv, textvariable=var, font=self.font, width=150).grid(
-                    row=r, column=2 * c + 1, sticky="w", padx=(0, 12), pady=4)
-            w["adv.quality"] = ctk.CTkLabel(adv, font=self.font, anchor="w")
-            w["adv.quality"].grid(row=3, column=0, sticky="w", padx=(12, 6), pady=4)
-            w["adv.quality.menu"] = ctk.CTkOptionMenu(adv, font=self.font, width=180, values=[],
-                                                      command=lambda _v: None)
-            w["adv.quality.menu"].grid(row=3, column=1, sticky="w", pady=4)
-            w["adv.device"] = ctk.CTkLabel(adv, font=self.font, anchor="w")
-            w["adv.device"].grid(row=3, column=2, sticky="w", padx=(12, 6), pady=4)
-            w["adv.device.menu"] = ctk.CTkOptionMenu(adv, font=self.font, width=150, values=["auto", "cuda", "cpu"],
-                                                     variable=self.device_var)
-            w["adv.device.menu"].grid(row=3, column=3, sticky="w", pady=4)
-            w["adv.engine"] = ctk.CTkLabel(adv, font=self.font, anchor="w")
-            w["adv.engine"].grid(row=4, column=0, sticky="w", padx=(12, 6), pady=4)
-            w["adv.engine.menu"] = ctk.CTkOptionMenu(adv, font=self.font, width=260, values=[], command=lambda _v: None)
-            w["adv.engine.menu"].grid(row=4, column=1, columnspan=2, sticky="w", pady=4)
-            w["adv.preview"] = ctk.CTkCheckBox(adv, variable=self.preview_var, font=self.font)
-            w["adv.preview"].grid(row=5, column=0, columnspan=4, sticky="w", padx=12, pady=(4, 10))
-            if self.advanced_open:
-                adv.grid(row=5, column=0, sticky="ew", padx=20, pady=(0, 6))
-
-            # models + run
-            run = ctk.CTkFrame(self)
-            run.grid(row=6, column=0, sticky="nsew", padx=20, pady=6)
-            run.grid_columnconfigure(0, weight=1)
-            run.grid_rowconfigure(4, weight=1)
-            w["models.status"] = ctk.CTkLabel(run, font=self.font, anchor="w", wraplength=520, justify="left")
-            w["models.status"].grid(row=0, column=0, sticky="w", padx=12, pady=(10, 4))
-            w["models.download"] = ctk.CTkButton(run, width=130, font=self.font, command=self.download_models)
-            w["models.download"].grid(row=0, column=1, padx=(6, 12), pady=(10, 4))
-            self.progress = ctk.CTkProgressBar(run, height=14)
-            self.progress.set(0)
-            self.progress.grid(row=1, column=0, columnspan=2, sticky="ew", padx=12, pady=(6, 2))
-            w["status"] = ctk.CTkLabel(run, font=self.font, anchor="w", wraplength=700, justify="left")
-            w["status"].grid(row=2, column=0, columnspan=2, sticky="w", padx=12, pady=(0, 4))
-            btns = ctk.CTkFrame(run, fg_color="transparent")
-            btns.grid(row=3, column=0, columnspan=2, sticky="ew", padx=12, pady=4)
-            w["run.generate"] = ctk.CTkButton(btns, height=44, width=210, font=self.font_bold, command=self.start)
-            w["run.generate"].pack(side="left")
-            secondary = dict(height=44, font=self.font, fg_color="transparent", border_width=1,
-                             border_color=PALETTE["border"], text_color=PALETTE["gold"])
-            w["run.open_osz"] = ctk.CTkButton(btns, command=lambda: self.last_osz and open_path(self.last_osz),
-                                              state="disabled", **secondary)
-            w["run.open_osz"].pack(side="left", padx=8)
-            w["run.open_folder"] = ctk.CTkButton(btns, command=lambda: open_path(Path(self.out_var.get())), **secondary)
-            w["run.open_folder"].pack(side="left")
-            self.log_box = ctk.CTkTextbox(run, font=ctk.CTkFont(family="Consolas", size=12), height=120)
-            self.log_box.grid(row=4, column=0, columnspan=2, sticky="nsew", padx=12, pady=(4, 10))
-            self.log_box.configure(state="disabled")
-
-            w["about"] = ctk.CTkLabel(self, font=ctk.CTkFont(family=_ui_font(), size=11), text_color=PALETTE["muted"])
-            w["about"].grid(row=7, column=0, sticky="e", padx=24, pady=(0, 8))
+            build_workspace(self, ctk, DND_FILES)
 
         def _set_window_icon(self) -> None:
             """Title-bar / taskbar icon: the bundled .ico (set after customtkinter installs its own)."""
@@ -359,28 +217,35 @@ def run_gui() -> int:
 
         def refresh_texts(self) -> None:
             w = self.widgets
+            if hasattr(self, "_quality_labels"):
+                self.quality_var.set(next((k for k, v in self._quality_labels.items() if v == w["adv.quality.menu"].get()), "normal"))
+                self.engine_var.set(next((k for k, v in self._engine_labels.items() if v == w["adv.engine.menu"].get()), "ml"))
             self.title(f"AUTO-OSU {__version__} · {AUTHOR}")
             self.header.set_texts(tr("app.title"), tr("app.subtitle"))
             self.header.lang_btn.configure(text=tr("lang.toggle"))
             self.header.theme_btn.configure(text=tr("theme.light" if self.mode == "dark" else "theme.dark"))
-            for key in ("song.section", "song.browse", "song.hint", "diff.section", "diff.hint", "out.section",
-                        "out.folder", "out.browse", "out.open_osu", "adv.seed", "adv.bpm", "adv.offset",
+            for key in ("song.section", "song.browse", "diff.section", "diff.hint", "out.section",
+                        "out.browse", "out.open_osu", "adv.seed", "adv.bpm", "adv.offset",
                         "adv.creator", "adv.star", "adv.quality", "adv.device", "adv.engine", "adv.preview",
-                        "models.download", "run.open_osz", "run.open_folder", "about"):
+                        "models.download", "run.open_osz", "run.open_folder", "about", "input.recursive",
+                        "input.queue", "batch.output_hint", "device.refresh", "batch.cancel",
+                        "runtime.install", "runtime.hint", "runtime.cancel"):
                 w[key].configure(text=tr(key))
             for name in PRESETS:
                 w[f"diff.{name}"].configure(text=tr(f"diff.{name}"))
             w["adv.toggle"].configure(text=tr("adv.hide" if self.advanced_open else "adv.show"))
             self._quality_labels = {k: tr(f"adv.quality.{k}") for k in QUALITY_STEPS}
             w["adv.quality.menu"].configure(values=list(self._quality_labels.values()))
-            w["adv.quality.menu"].set(self._quality_labels[self.quality_var.get()])
+            w["adv.quality.menu"].set(self._quality_labels.get(self.quality_var.get(), self._quality_labels["normal"]))
             self._engine_labels = {"ml": tr("adv.engine.ml"), "rules": tr("adv.engine.rules")}
             w["adv.engine.menu"].configure(values=list(self._engine_labels.values()))
-            w["adv.engine.menu"].set(self._engine_labels[self.engine_var.get()])
-            w["run.generate"].configure(text=tr("run.running" if self.busy else "run.generate"))
+            w["adv.engine.menu"].set(self._engine_labels.get(self.engine_var.get(), self._engine_labels["ml"]))
             if not self.busy:
                 w["status"].configure(text=tr("status.idle"))
             self.refresh_models()
+            self.update_input_mode()
+            self.render_queue()
+            self.refresh_cuda_text()
 
         # ------------------------------------------------------------------ animations
         def _fade_in(self) -> None:
@@ -453,7 +318,7 @@ def run_gui() -> int:
         def toggle_advanced(self) -> None:
             self.advanced_open = not self.advanced_open
             if self.advanced_open:
-                self.adv_frame.grid(row=5, column=0, sticky="ew", padx=20, pady=(0, 6))
+                self.adv_frame.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, 10))
                 self._fade_frame(self.adv_frame)
             else:
                 self.adv_frame.grid_forget()
@@ -462,7 +327,10 @@ def run_gui() -> int:
         def browse_song(self) -> None:
             from tkinter import filedialog
 
-            path = filedialog.askopenfilename(filetypes=[(tr("song.filetypes"), " ".join(AUDIO_EXT)), ("*", "*.*")])
+            if self.source_mode.get() == "folder":
+                path = filedialog.askdirectory(parent=self)
+            else:
+                path = filedialog.askopenfilename(parent=self, filetypes=[(tr("song.filetypes"), " ".join(AUDIO_EXT)), ("*", "*.*")])
             if path:
                 self.song_var.set(path)
 
@@ -474,12 +342,146 @@ def run_gui() -> int:
                 self.out_var.set(path)
 
         def on_drop(self, event) -> None:
-            data = event.data.strip()
-            if data.startswith("{"):
-                data = data[1:].split("}")[0]
+            if self.busy:
+                return
+            paths = self.tk.splitlist(event.data)
+            if paths:
+                self.source_mode.set("folder" if Path(paths[0]).is_dir() else "file")
+                self.update_input_mode()
+                self.song_var.set(paths[0])
+
+        def change_input_mode(self, label) -> None:
+            self.source_mode.set("folder" if label == tr("input.batch") else "file")
+            self.update_input_mode()
+            self.schedule_scan()
+
+        def update_input_mode(self) -> None:
+            folder = self.source_mode.get() == "folder"
+            w = self.widgets
+            w["input.mode"].configure(values=[tr("input.single"), tr("input.batch")])
+            w["input.mode"].set(tr("input.batch" if folder else "input.single"))
+            w["song.hint"].configure(text=tr("input.folder_hint" if folder else "song.hint"))
+            for key in ("input.recursive", "batch.output_hint"):
+                w[key].grid() if folder else w[key].grid_remove()
+            w["out.open_osu"].grid_remove() if folder else w["out.open_osu"].grid()
+            w["batch.cancel"].configure(state="normal" if self.busy and self.active_batch and not self.cancel_event.is_set() else "disabled")
+            w["run.generate"].configure(text=tr("run.running" if self.busy else ("batch.start" if folder else "run.generate")))
+
+        def schedule_scan(self, *_args) -> None:
+            if self.busy:
+                return
+            self.scan_token += 1
+            if self._scan_after:
+                self.after_cancel(self._scan_after)
+            self._scan_after = self.after(300, lambda token=self.scan_token: self.scan_source(token))
+
+        def scan_source(self, token) -> None:
+            self._scan_after = None
+            raw = self.song_var.get().strip().strip('"')
+            if not raw:
+                self.jobs, self.job_states = [], {}
+                self.render_queue()
+                return
+            source = Path(raw)
+            destination = Path(self.out_var.get() or str(app_root()/"output")).resolve()
+            recursive = self.recursive_var.get()
+            self.widgets["input.count"].configure(text=tr("input.scan"))
+            def scan():
+                from .batch import scan_inputs
+                try:
+                    excluded = [destination] if destination != source.resolve() and destination.is_relative_to(source.resolve()) else []
+                    jobs = scan_inputs(source, recursive, excluded)
+                    self.q.put(("scan", token, jobs, source.is_dir(), None))
+                except Exception as exc:
+                    self.q.put(("scan", token, [], source.is_dir(), str(exc)))
+            threading.Thread(target=scan, daemon=True).start()
+
+        def render_queue(self, error=None) -> None:
+            self.widgets["input.count"].configure(text=tr("input.count", n=len(self.jobs)))
+            lines = []
+            root = Path(self.song_var.get().strip().strip('"')).resolve()
+            for job in self.jobs:
+                state = self.job_states.get(str(job), "pending")
+                path = Path(job)
+                label = path.relative_to(root).as_posix() if self.source_mode.get() == "folder" and path.is_relative_to(root) else path.name
+                lines.append(f"{tr('input.' + state):<10}  {label}")
+            self.queue_box.configure(state="normal")
+            self.queue_box.delete("1.0", "end")
+            self.queue_box.insert("1.0", error or "\n".join(lines) or tr("input.empty"))
+            self.queue_box.configure(state="disabled")
+            if self.busy and self.current_index:
+                self.queue_box.see(f"{self.current_index}.0")
+
+        def check_cuda(self) -> None:
+            if self.cuda_checking or self.busy:
+                return
+            self.cuda_checking = True
+            self.widgets["device.refresh"].configure(state="disabled")
+            self.widgets["run.generate"].configure(state="disabled")
+            self.widgets["runtime.install"].configure(state="disabled")
+            self.widgets["device.status"].configure(text=tr("device.checking"))
+            def check():
+                from .runtime import detect_runtime
+                self.q.put(("cuda", detect_runtime()))
+            threading.Thread(target=check, daemon=True).start()
+
+        def refresh_cuda_text(self) -> None:
+            status = self.cuda_status
+            if status is None or self.cuda_checking:
+                value = tr("device.checking")
+            elif status.available:
+                value = tr("device.ready", version=status.cuda_version, name=status.name, memory=status.memory_gb)
+                if self.managed_python:
+                    value += "\n" + tr("runtime.managed")
             else:
-                data = data.split(" ")[0]
-            self.song_var.set(data)
+                value = tr("device." + status.reason, detail=status.detail)
+                if status.reason == "cpu_build" and status.name:
+                    value += "\n" + tr("device.gpu_found", name=status.name)
+            self.widgets["device.status"].configure(text=value, text_color=PALETTE["cyan"] if status and status.available else PALETTE["muted"])
+            self.widgets["runtime.install"].configure(text=tr("runtime.repair" if self.managed_python else "runtime.install"))
+
+        def install_gpu_runtime(self) -> None:
+            if self.busy or self.cuda_checking:
+                return
+            self.runtime_installing = True
+            self.runtime_cancel.clear()
+            self.cancel_event.clear()
+            self.active_batch = False
+            self.set_busy(True)
+            self.set_progress(0)
+            self.widgets["runtime.cancel"].configure(state="normal")
+            self.widgets["runtime.cancel"].grid()
+            self.widgets["status"].configure(text=tr("runtime.uv"))
+            def install():
+                from .runtime import SetupCancelled, install_runtime
+                try:
+                    result = install_runtime(log=lambda msg: self.q.put(("log", msg)),
+                                             progress=lambda f, m: self.q.put(("progress", f, m)), cancel=self.runtime_cancel)
+                    self.q.put(("runtime_ready", result))
+                except SetupCancelled:
+                    self.q.put(("runtime_cancelled", None))
+                except Exception as exc:
+                    self.q.put(("runtime_failed", str(exc)))
+            threading.Thread(target=install, daemon=True).start()
+
+        def cancel_runtime_setup(self) -> None:
+            self.runtime_cancel.set()
+            self.widgets["runtime.cancel"].configure(state="disabled")
+
+        def cancel_batch(self) -> None:
+            if self.busy and self.active_batch:
+                self.cancel_event.set()
+                self.widgets["batch.cancel"].configure(state="disabled", text=tr("batch.stopping"))
+                self.widgets["status"].configure(text=tr("batch.stopping"))
+
+        def open_last(self) -> None:
+            if self.last_osz:
+                open_path(self.last_osz)
+
+        def open_output(self) -> None:
+            path = self.last_output_dir or Path(self.out_var.get())
+            path.mkdir(parents=True, exist_ok=True)
+            open_path(path)
 
         def models_present(self) -> Dict[str, Optional[Path]]:
             return {name: find_model(name) for name in MODELS}
@@ -520,9 +522,22 @@ def run_gui() -> int:
 
         def set_busy(self, busy: bool) -> None:
             self.busy = busy
-            self.widgets["run.generate"].configure(state="disabled" if busy else "normal",
-                                                   text=tr("run.running" if busy else "run.generate"))
-            self.widgets["models.download"].configure(state="disabled" if busy else "normal")
+            state = "disabled" if busy else "normal"
+            for key in ("run.generate", "models.download", "song.entry", "song.browse", "input.mode", "input.recursive",
+                        "out.entry", "out.browse", "out.open_osu", "adv.device.menu", "adv.quality.menu", "adv.engine.menu", "adv.preview", "runtime.install"):
+                self.widgets[key].configure(state=state)
+            for name in PRESETS:
+                self.widgets[f"diff.{name}"].configure(state=state)
+            for key in ("adv.seed", "adv.bpm", "adv.offset", "adv.creator", "adv.star"):
+                self.widgets[key+".entry"].configure(state=state)
+            self.widgets["device.refresh"].configure(state="disabled" if busy or self.cuda_checking else "normal")
+            if self.cuda_checking:
+                self.widgets["run.generate"].configure(state="disabled")
+                self.widgets["runtime.install"].configure(state="disabled")
+            self.widgets["batch.cancel"].configure(text=tr("batch.cancel"))
+            self.update_input_mode()
+            if self.runtime_installing:
+                self.widgets["run.generate"].configure(text=tr("runtime.install"))
 
         def collect_settings(self) -> Dict:
             quality = next((k for k, v in self._quality_labels.items() if v == self.widgets["adv.quality.menu"].get()), "normal")
@@ -536,10 +551,11 @@ def run_gui() -> int:
                 "offset": self.offset_var.get(), "creator": self.creator_var.get(), "star": self.star_var.get(),
                 "quality": quality, "device": self.device_var.get(), "engine": engine,
                 "preview": self.preview_var.get(), "advanced_open": self.advanced_open, "geometry": self.geometry(),
+                "source_mode": self.source_mode.get(), "recursive": self.recursive_var.get(),
             }
 
         def start(self) -> None:
-            if self.busy:
+            if self.busy or self.cuda_checking:
                 return
             s = self.collect_settings()
             save_settings(s)
@@ -548,6 +564,8 @@ def run_gui() -> int:
                 return self.show_error(tr("err.no_song"))
             if not song.exists():
                 return self.show_error(tr("err.file_missing", path=song))
+            if s["source_mode"] == "folder" and not song.is_dir():
+                return self.show_error(tr("input.folder_hint"))
             if not s["difficulties"]:
                 return self.show_error(tr("err.no_diff"))
             found = self.models_present()
@@ -568,6 +586,18 @@ def run_gui() -> int:
             self.log_box.configure(state="disabled")
             self.set_progress(0.0)
             self.widgets["run.open_osz"].configure(state="disabled")
+            self.last_osz = None
+            self.scan_token += 1
+            self.cancel_event.clear()
+            self.active_batch = song.is_dir()
+            self.source_mode.set("folder" if self.active_batch else "file")
+            self._open_after = s["open_osu"] and not self.active_batch
+            self.last_output_dir = Path(s["out_dir"] or str(app_root()/"output")).resolve()
+            self.job_states = {}
+            if not self.active_batch:
+                self.jobs = [song.resolve()]
+                self.job_states[str(song.resolve())] = "running"
+            self.render_queue()
             self.set_busy(True)
             kwargs = dict(
                 seed=seed, bpm=bpm, offset_ms=offset, creator=s["creator"] or "AUTO-OSU", star_rating=star,
@@ -575,13 +605,29 @@ def run_gui() -> int:
                 rhythm_model=str(found["rhythm"]) if s["engine"] == "ml" else None,
                 coord_model=str(found["coord"]) if s["engine"] == "ml" else None,
             )
-            threading.Thread(target=self.work, args=(song, s["difficulties"], Path(s["out_dir"]), kwargs, s["preview"]),
+            threading.Thread(target=self.work, args=(song, s["difficulties"], self.last_output_dir, kwargs, s["preview"], s["recursive"]),
                              daemon=True).start()
 
-        def work(self, song: Path, diffs, out_dir: Path, kwargs: Dict, preview: bool) -> None:
+        def work(self, song: Path, diffs, out_dir: Path, kwargs: Dict, preview: bool, recursive: bool = False) -> None:
             from .generate import generate
 
             try:
+                if self.managed_python and kwargs.get("device") != "cpu" and kwargs.get("rhythm_model"):
+                    from .runtime import run_in_runtime
+                    request = dict(source=str(song.resolve()), difficulties=diffs, out_dir=str(out_dir.resolve()),
+                                   kwargs=kwargs, preview=preview, recursive=recursive)
+                    run_in_runtime(self.managed_python, request, self.worker_event, self.cancel_event)
+                    return
+                if song.is_dir():
+                    from .batch import generate_batch
+                    def notify(i, n, item):
+                        self.q.put(("batch_item", i, n, item.source, item.status, item.osz, item.error))
+                    result = generate_batch(song, diffs, out_dir, recursive=recursive, preview=preview,
+                                            cancel=self.cancel_event, on_item=notify,
+                                            log=lambda t: self.q.put(("log", t)),
+                                            progress=lambda f, m: self.q.put(("progress", f, m)), **kwargs)
+                    self.q.put(("batch_done", result))
+                    return
                 res = generate(song, diffs, out_dir, log=lambda t: self.q.put(("log", t)),
                                progress=lambda f, m: self.q.put(("progress", f, m)), **kwargs)
                 if preview:
@@ -590,12 +636,31 @@ def run_gui() -> int:
                     for d in res.diffs:
                         out = out_dir / f"{song.stem} [{d.preset.name}]_preview.mp3"
                         self.q.put(("log", f"preview: {render_preview(res.audio_file, d.beatmap, out, click_shift_ms=res.osu_shift_ms)}"))
-                self.q.put(("done", res))
+                from .worker import summary
+                self.q.put(("single_done", summary(res)))
             except Exception as e:  # noqa: BLE001
                 self.q.put(("log", traceback.format_exc()))
                 self.q.put(("error", f"{type(e).__name__}: {e}"))
 
+        def worker_event(self, event) -> None:
+            kind = event["event"]
+            if kind == "log":
+                self.q.put(("log", event["text"]))
+            elif kind == "progress":
+                self.q.put(("progress", event["fraction"], event["message"]))
+            elif kind == "single_done":
+                self.q.put(("single_done", event["result"]))
+            elif kind == "batch_item":
+                job = event["item"]
+                self.q.put(("batch_item", event["index"], event["total"], job["source"], job["status"], job["osz"], job["error"]))
+            elif kind == "batch_done":
+                from .batch import BatchItem, BatchResult
+                self.q.put(("batch_done", BatchResult(Path(event["report"]), [BatchItem(**item) for item in event["items"]],
+                                                       event["elapsed_s"], event["cancelled"])))
+
         def status_text(self, msg: str) -> str:
+            if msg in _keys():
+                return tr(msg)
             if ": rhythm" in msg:
                 return tr("status.rhythm", diff=msg.split(":")[0])
             if ": placing" in msg:
@@ -608,37 +673,105 @@ def run_gui() -> int:
                 while True:
                     item = self.q.get_nowait()
                     kind = item[0]
-                    if kind == "log":
+                    if kind == "cuda":
+                        self.cuda_status, self.managed_python = item[1].cuda, item[1].python
+                        self.cuda_checking = False
+                        self.widgets["device.refresh"].configure(state="disabled" if self.busy else "normal")
+                        self.widgets["run.generate"].configure(state="disabled" if self.busy else "normal")
+                        self.widgets["runtime.install"].configure(state="disabled" if self.busy else "normal")
+                        if item[1].managed_error:
+                            self.log(item[1].managed_error)
+                        self.refresh_cuda_text()
+                    elif kind in ("runtime_ready", "runtime_cancelled", "runtime_failed"):
+                        self.runtime_installing = False
+                        self.widgets["runtime.cancel"].grid_remove()
+                        self.set_busy(False)
+                        if kind == "runtime_ready":
+                            self.cuda_status, self.managed_python = item[1].cuda, item[1].python
+                            self.set_progress(1)
+                            self.device_var.set("auto")
+                            self.widgets["status"].configure(text=tr("runtime.ready"))
+                            self.refresh_cuda_text()
+                        else:
+                            self.set_progress(0)
+                            self.widgets["status"].configure(text=tr("runtime.cancelled" if kind == "runtime_cancelled" else "runtime.failed"))
+                            if item[1]:
+                                self.log(item[1])
+                    elif kind == "scan":
+                        if item[1] == self.scan_token and not self.busy:
+                            self.jobs, self.job_states = item[2], {}
+                            if item[3]:
+                                self.source_mode.set("folder")
+                                self.update_input_mode()
+                            self.render_queue(item[4])
+                    elif kind == "batch_item":
+                        _, i, total, source, state, osz, error = item
+                        self.current_index, self.current_total = i + 1, total
+                        self.current_file = Path(source).name
+                        if Path(source) not in self.jobs:
+                            self.jobs.append(Path(source))
+                        self.job_states[source] = state
+                        if osz:
+                            self.last_osz = Path(osz)
+                        self.render_queue()
+                    elif kind == "batch_done":
+                        result = item[1]
+                        self.set_busy(False)
+                        self.jobs = [Path(job.source) for job in result.items]
+                        self.job_states = {job.source: job.status for job in result.items}
+                        self.render_queue()
+                        remaining = sum(job.status == "cancelled" for job in result.items)
+                        self.set_progress((result.succeeded + result.failed) / len(result.items))
+                        key = "batch.stopped" if result.cancelled else "batch.done"
+                        self.widgets["status"].configure(text=tr(key, ok=result.succeeded, failed=result.failed,
+                                                               remaining=remaining, secs=result.elapsed_s))
+                        self.widgets["run.open_osz"].configure(state="normal" if self.last_osz else "disabled")
+                        self.log(tr("batch.report", path=result.report))
+                        self.active_batch = False
+                    elif kind == "log":
                         self.log(item[1])
                     elif kind == "progress":
                         self.set_progress(item[1])
-                        self.widgets["status"].configure(text=self.status_text(item[2]))
+                        if not self.cancel_event.is_set():
+                            if item[2] != "batch item done":
+                                prefix = f"{self.current_index}/{self.current_total} · {self.current_file} — " if self.active_batch else ""
+                                self.widgets["status"].configure(text=prefix + self.status_text(item[2]))
                     elif kind == "models":
                         self.set_busy(False)
                         self.set_progress(0.0)
                         self.widgets["status"].configure(text=tr("status.idle"))
                         self.refresh_models()
-                    elif kind == "done":
+                    elif kind == "single_done":
                         res = item[1]
                         self.set_busy(False)
                         self.set_progress(1.0)
-                        self.last_osz = res.osz
+                        self.last_osz = Path(res["osz"])
+                        if self.jobs:
+                            self.job_states[str(self.jobs[0])] = "done"
+                            self.render_queue()
                         self.widgets["run.open_osz"].configure(state="normal")
                         self.widgets["status"].configure(
-                            text=tr("status.done", file=res.osz.name, secs=res.elapsed_s, device=res.device))
-                        self.log(tr("result.summary", bpm=res.timing.bpm, n=len(res.diffs)))
-                        for d in res.diffs:
-                            s = d.summary()
-                            self.log(tr("result.diff", name=d.preset.name, objects=s["objects"], sliders=s["sliders"], nps=s["nps"]))
+                            text=tr("status.done", file=self.last_osz.name, secs=res["elapsed_s"], device=res["device"]))
+                        self.log(tr("result.summary", bpm=res["bpm"], n=len(res["diffs"])))
+                        for s in res["diffs"]:
+                            self.log(tr("result.diff", name=s["name"], objects=s["objects"], sliders=s["sliders"], nps=s["nps"]))
                         self._flash_done()
-                        if self.open_osu_var.get():
-                            open_path(res.osz)
+                        if self._open_after and not self._closing:
+                            open_path(self.last_osz)
                     elif kind == "error":
                         self.set_busy(False)
+                        for key, value in self.job_states.items():
+                            if value == "running":
+                                self.job_states[key] = "error"
+                        self.render_queue()
                         self.widgets["status"].configure(text=tr("status.error", err=item[1]))
-                        self.show_error(item[1])
+                        if not self._closing:
+                            self.show_error(item[1])
             except queue.Empty:
                 pass
+            if self._closing and not self.busy:
+                self.destroy()
+                return
             self.after(100, self.poll)
 
         def show_error(self, text: str) -> None:
@@ -651,9 +784,19 @@ def run_gui() -> int:
                 save_settings(self.collect_settings())
             except Exception:
                 pass
-            self.destroy()
+            if self.busy:
+                self._closing = True
+                self.cancel_event.set()
+                self.runtime_cancel.set()
+                self.widgets["status"].configure(text=tr("batch.stopping"))
+            else:
+                self.destroy()
 
-    app = App()
+    return App()
+
+
+def run_gui() -> int:
+    app = create_app()
     app.mainloop()
     return 0
 

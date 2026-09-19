@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -12,7 +13,10 @@ from .models import MODELS, ensure_model, find_model
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="autoosu", description="Generate an osu!standard beatmap from a song.")
-    p.add_argument("audio", nargs="?", help="song file: mp3/ogg/wav/flac/m4a/aac/wma/opus ... or a video (its audio track is used)")
+    p.add_argument("audio", nargs="?", help="audio/video file, or a folder for batch generation")
+    p.add_argument("--recursive", action="store_true", help="also scan subfolders for batch generation")
+    p.add_argument("--check-cuda", action="store_true", help="check CUDA in this runtime and exit")
+    p.add_argument("--setup-runtime", action="store_true", help="use uv to install and verify an app-managed GPU runtime")
     p.add_argument("-d", "--difficulty", nargs="+", default=["Hard", "Insane"],
                    metavar="NAME", help=f"difficulties to generate: {', '.join(PRESETS)}")
     p.add_argument("-o", "--out", default="out", help="output directory (default: out)")
@@ -77,6 +81,28 @@ def main(argv=None) -> int:
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
     args = build_parser().parse_args(argv)
+    if args.setup_runtime:
+        from .runtime import install_runtime
+        from .devices import describe_cuda
+        try:
+            runtime = install_runtime(progress=lambda f, m: print(f"{f:.0%} {m}", flush=True))
+            print(describe_cuda(runtime.cuda))
+            print(f"Managed Python: {runtime.python}")
+            return 0
+        except Exception as exc:
+            print(f"GPU setup failed: {exc}", file=sys.stderr)
+            return 1
+    if args.check_cuda:
+        from .devices import describe_cuda
+        from .runtime import detect_runtime
+
+        runtime = detect_runtime()
+        print(describe_cuda(runtime.cuda))
+        if runtime.python:
+            print(f"Managed Python: {runtime.python}")
+        elif runtime.managed_error:
+            print(f"Managed runtime needs repair: {runtime.managed_error}")
+        return 0
     if args.gui or not args.audio:
         from .gui import run_gui
 
@@ -86,11 +112,50 @@ def main(argv=None) -> int:
         print(f"error: {audio} not found", file=sys.stderr)
         return 2
     rhythm, coord = resolve_models(args)
+    if not args.rules and args.device != "cpu" and not os.environ.get("AUTOOSU_MANAGED_WORKER"):
+        from .runtime import active_python, popen, probe_python
+        python = active_python()
+        if python and python.resolve() != Path(sys.executable).resolve():
+            try:
+                ready = probe_python(python).available
+            except Exception:
+                ready = False
+            if ready:
+                forwarded = list(sys.argv[1:] if argv is None else argv)
+                if rhythm:
+                    forwarded += ["--rhythm-model", str(Path(rhythm).resolve())]
+                if coord:
+                    forwarded += ["--coord-model", str(Path(coord).resolve())]
+                return popen([python, "-I", "-m", "autoosu.cli", *forwarded],
+                             stdout=sys.stdout, stderr=sys.stderr).wait()
     if not args.rules:
         missing = [n for n, p in (("rhythm", rhythm), ("coord", coord)) if p is None and not (n == "coord" and args.no_coord_model)]
         if missing:
             print(f"note: no {' / '.join(missing)} model found in the models folder; add --download to fetch "
                   f"them or --rules for the rule-based generator", file=sys.stderr)
+
+    if audio.is_dir():
+        from .batch import generate_batch
+
+        try:
+            batch = generate_batch(
+                audio, args.difficulty, Path(args.out), recursive=args.recursive, preview=args.preview,
+                debug_plot=args.debug_plot, seed=args.seed, bpm=args.bpm, offset_ms=args.offset,
+                title=args.title, artist=args.artist, creator=args.creator, osu_shift_ms=args.osu_shift,
+                rhythm_model=rhythm, temperature=args.temperature, density=args.density,
+                density_bias=args.density_bias, star_rating=args.star, decode_steps=args.decode_steps,
+                coord_model=coord, coord_steps=args.coord_steps, cfg_scale=args.cfg_scale, device=args.device,
+                on_result=_dump_events if args.dump_events else None,
+            )
+        except (ValueError, OSError, RuntimeError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        print(f"Batch complete: {batch.succeeded} succeeded, {batch.failed} failed ({batch.elapsed_s:.1f} s)")
+        print(f"Report: {batch.report}")
+        return 1 if batch.failed else 0
+    if args.recursive:
+        print("error: --recursive requires a folder input", file=sys.stderr)
+        return 2
 
     res = generate(audio, args.difficulty, args.out, seed=args.seed, bpm=args.bpm, offset_ms=args.offset,
                    title=args.title, artist=args.artist, creator=args.creator, osu_shift_ms=args.osu_shift,
@@ -99,12 +164,7 @@ def main(argv=None) -> int:
                    coord_model=coord, coord_steps=args.coord_steps, cfg_scale=args.cfg_scale, device=args.device)
 
     if args.dump_events:
-        for d in res.diffs:
-            print(f"--- {d.preset.name}")
-            for ev in d.events:
-                extra = f" -> {ev.end_time}" if ev.kind != "circle" else ""
-                print(f"{ev.time:7d}{extra:>10}  {ev.kind:7s} beat {ev.beat:8.2f} str {ev.strength:.2f}"
-                      f"{'  NC' if ev.new_combo else ''}")
+        _dump_events(res)
 
     if args.debug_plot:
         from .debug import plot_debug
@@ -122,6 +182,15 @@ def main(argv=None) -> int:
 
     print(f"done in {res.elapsed_s:.1f} s ({res.device}) -> {res.osz}")
     return 0
+
+
+def _dump_events(res) -> None:
+    for d in res.diffs:
+        print(f"--- {d.preset.name}")
+        for ev in d.events:
+            extra = f" -> {ev.end_time}" if ev.kind != "circle" else ""
+            print(f"{ev.time:7d}{extra:>10}  {ev.kind:7s} beat {ev.beat:8.2f} str {ev.strength:.2f}"
+                  f"{'  NC' if ev.new_combo else ''}")
 
 
 if __name__ == "__main__":

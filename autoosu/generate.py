@@ -117,14 +117,19 @@ def build_beatmap(preset: DifficultyPreset, timing: Timing, objects: List[HitObj
 
 
 def pick_device(device: Optional[str] = None) -> str:
-    if device and device != "auto":
-        return device
-    try:
-        import torch
+    from .devices import resolve_device
 
-        return "cuda" if torch.cuda.is_available() else "cpu"
-    except Exception:
-        return "cpu"
+    return resolve_device(device)
+
+
+def cached_model(cache: Dict, kind: str, path: str, device: str, loader):
+    """A batch owns this cache; never retain models globally after it finishes."""
+    source = Path(path).resolve()
+    stat = source.stat()
+    key = (kind, str(source), stat.st_mtime_ns, stat.st_size, device)
+    if key not in cache:
+        cache[key] = loader(path, device)
+    return cache[key]
 
 
 def generate(audio_path: str | Path, difficulties: List[str], out_dir: str | Path = "out",
@@ -134,7 +139,8 @@ def generate(audio_path: str | Path, difficulties: List[str], out_dir: str | Pat
              rhythm_model: Optional[str] = None, temperature: float = 0.9, density: Optional[float] = None,
              density_bias: float = 0.0, star_rating: Optional[float] = None, decode_steps: int = 12,
              coord_model: Optional[str] = None, coord_steps: int = 100, cfg_scale: float = 1.0,
-             device: Optional[str] = None, progress: Optional[ProgressFn] = None) -> GenerateResult:
+             device: Optional[str] = None, progress: Optional[ProgressFn] = None,
+             model_cache: Optional[Dict] = None) -> GenerateResult:
     """Analyse a song and write one .osz with the requested difficulties.
 
     rhythm_model / coord_model: paths to the trained models; without them the rule-based layers run.
@@ -143,6 +149,10 @@ def generate(audio_path: str | Path, difficulties: List[str], out_dir: str | Pat
     t0 = _time.perf_counter()
     audio_path, out_dir = Path(audio_path), Path(out_dir)
     presets = [get_preset(d) for d in difficulties]
+    if not presets:
+        raise ValueError("Choose at least one difficulty")
+    dev = pick_device(device) if (rhythm_model or coord_model) else "cpu"
+    cache = model_cache if model_cache is not None else {}
     report = progress or (lambda f, m: None)
 
     report(0.0, "load")
@@ -176,21 +186,20 @@ def generate(audio_path: str | Path, difficulties: List[str], out_dir: str | Pat
     kiai = sections.kiai
     log(f"      {len(kiai)} kiai section(s): " + ", ".join(f"{a / 1000:.0f}-{b / 1000:.0f}s" for a, b in kiai))
 
-    dev = pick_device(device) if (rhythm_model or coord_model) else "cpu"
     model = mel = cm = None
     if rhythm_model:
         from .ml.model import TickTransformer
         from .ml.sample import song_mel_uint8
 
         report(0.22, "load rhythm model")
-        model = TickTransformer.load(rhythm_model, dev)
+        model = cached_model(cache, "rhythm", rhythm_model, dev, TickTransformer.load)
         mel = song_mel_uint8(audio_path)
         log(f"      rhythm model {Path(rhythm_model).name} on {dev}")
     if coord_model:
         from .ml.coord_infer import load_coord_model
 
         report(0.25, "load coordinate model")
-        cm = load_coord_model(coord_model, dev)
+        cm = cached_model(cache, "coord", coord_model, dev, load_coord_model)
         log(f"      coordinate model {Path(coord_model).name} on {dev}")
 
     log("[4/4] generating difficulties")

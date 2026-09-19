@@ -12,11 +12,11 @@
 ![AUTO-OSU main window](docs/screenshot_zh.png)
 
 <details>
-<summary>Light theme / while generating</summary>
+<summary>Light theme / batch results</summary>
 
 ![light theme](docs/screenshot_en.png)
 
-![generating](docs/screenshot_busy.png)
+![batch results](docs/screenshot_busy.png)
 
 </details>
 
@@ -37,13 +37,28 @@ If it helps you, a ⭐ **star** means a lot. — kanzei
 
 ### No install (Windows)
 
-1. Download `AUTO-OSU-<version>-win64-cpu.zip` from [Releases](https://github.com/kanze1/AUTO-OSU/releases) (about 550 MB, models included) and unzip it anywhere.
+1. Download `AUTO-OSU-<version>-win64-cpu.zip` from [Releases](https://github.com/kanze1/AUTO-OSU/releases) (models included) and unzip it anywhere.
 2. Run `AUTO-OSU.exe`.
 3. Drag a song onto the window, tick difficulties, click **Generate**.
 4. The `.osz` is written to the `output` folder next to the exe and, by default, opened in osu! (it imports itself). Open osu! and it is in the song list.
 
 No GPU needed: a 3-minute song, one difficulty, takes about a minute on a modern CPU (70 s measured on 16 cores; 16 s on an RTX 4090).
 Windows 10 / 11, 64-bit.
+
+### Set up GPU acceleration
+
+Click **Set up GPU acceleration** under Device. The app prepares uv, a separate Python 3.12, and a CUDA-enabled PyTorch selected for your driver. After an actual CUDA operation succeeds, the runtime is ready immediately, without restarting the window.
+
+- No existing Python, uv, or CUDA Toolkit installation is needed. An NVIDIA GPU and its driver are required.
+- The first download is several GB. Progress and installer logs appear in the window, and setup can be cancelled.
+- The runtime lives in `%LOCALAPPDATA%\AUTO-OSU\runtime` and leaves your system Python alone. A failed repair keeps the previous working runtime active.
+- `auto` prefers an available GPU; `cpu` always uses CPU; an explicit `cuda` selection reports a clear error when unavailable.
+
+### Generate a whole folder
+
+Select **Folder batch**, browse or drop a directory, optionally enable **Include subfolders**, and click **Generate batch**. Supported audio and video files appear in the processing queue.
+
+Each song has its own output folder, so duplicate filenames cannot overwrite one another. A damaged file is recorded and the next file is processed. A `batch-report-*.json` records outputs, errors, and the device used. **Stop after current** finishes the active song and cancels the remaining queue. Import the generated `.osz` files into osu! when you are ready.
 
 ### Which audio works
 
@@ -60,11 +75,12 @@ ffmpeg ships with the program; nothing to install.
 
 | Area | What it does |
 | --- | --- |
-| Song | Drag and drop, or Browse. |
+| Song | Single song / Folder batch, drag and drop or Browse, with a processing queue. |
 | Difficulties | Easy / Normal / Hard / Insane, any combination, all packed into one `.osz`. Default Hard + Insane. |
 | Output | Target folder; "Import into osu! when done" opens the `.osz`, same as double-clicking it. |
 | Models | Shows whether the models are present; one-click download if not (checksums verified). |
-| Top right | Chinese / English, light / dark. Settings, last song and folder are remembered. |
+| Device | Actual CUDA availability, GPU and memory, plus Recheck and automatic GPU setup. |
+| Cover | Chinese / English, light / dark. Settings, last song and folder are remembered. |
 
 **Advanced options** (click "Advanced options"):
 
@@ -75,13 +91,18 @@ ffmpeg ships with the program; nothing to install.
 | Creator name | Written into the `.osu` as Creator, default AUTO-OSU. |
 | Star rating | Difficulty hint for the models; blank = per-difficulty default: Easy 2.0 / Normal 3.2 / Hard 4.5 / Insane 5.5. Raise it for a denser Hard. |
 | Placement quality | Diffusion steps of the coordinate model: fast 50 / standard 100 / fine 200. Standard is plenty. |
-| Device | auto prefers a CUDA GPU, otherwise CPU. |
 | Engine | "AI models" is the normal mode; "rules only" needs no models and maps in seconds — for comparison or when models are missing. |
 | Preview mp3 | Also saves an mp3 with the song turned down and a click on every object, to check the rhythm without opening osu!. |
 
 ### Command line
 
 `python -m autoosu SONG [options]`; the exe accepts the same arguments (`AUTO-OSU.exe song.mp3 -d Hard`).
+
+```powershell
+python -m autoosu --setup-runtime
+python -m autoosu --check-cuda
+python -m autoosu "D:\Music" --recursive -d Hard Insane -o "D:\Beatmaps"
+```
 
 | Option | Meaning |
 | --- | --- |
@@ -95,6 +116,9 @@ ffmpeg ships with the program; nothing to install.
 | `--cfg-scale X` | classifier-free guidance of the coordinate model, default 1.0 |
 | `--temperature` / `--density` / `--density-bias` / `--decode-steps` | rhythm-model sampling: temperature, target objects per measure, "no note" bias (negative = denser), decoding rounds |
 | `--device auto\|cuda\|cpu` | compute device |
+| `--setup-runtime` | install and verify an app-managed GPU runtime with uv |
+| `--check-cuda` | check the effective inference runtime, including the managed environment |
+| `--recursive` | include subfolders when the input is a directory |
 | `--rules` | rule-based mode |
 | `--rhythm-model` / `--coord-model` | explicit model files; otherwise looked up in `models/` |
 | `--no-coord-model` | rhythm model only, rule-based placement |
@@ -111,7 +135,7 @@ git clone https://github.com/kanze1/AUTO-OSU
 cd AUTO-OSU
 python -m venv .venv && .venv\Scripts\activate       # Windows; Linux/macOS: source .venv/bin/activate
 pip install -e .[gui]
-# NVIDIA GPU (optional): pip install torch --index-url https://download.pytorch.org/whl/cu130
+python -m autoosu --setup-runtime                     # optional: prepare the separate GPU runtime
 python -m autoosu --download                          # fetch the models once (~320 MB)
 python -m autoosu                                     # open the window
 python -m autoosu "song.mp3" -d Hard Insane -o out    # command line
@@ -184,7 +208,7 @@ and put them into the `models/` folder next to the exe (or `~/.autoosu/models/`)
 
 **osu! did not open?** `.osz` is not associated with osu! on your system; drag the generated `.osz` onto the osu! window.
 
-**Too slow?** About a minute per difficulty on CPU is normal; "fast" placement quality halves it; with an NVIDIA GPU install the CUDA torch via the Python route.
+**Too slow?** About a minute per difficulty on CPU is normal; "fast" placement quality halves it; with an NVIDIA GPU click **Set up GPU acceleration** in the window.
 
 **A format will not decode?** Make sure the file plays at all; the program tries libsndfile, then the bundled ffmpeg, and reports the exact reason if both fail.
 
@@ -192,7 +216,7 @@ and put them into the `models/` folder next to the exe (or `~/.autoosu/models/`)
 
 - Coordinate model v1: required slider length as a per-point condition, ending shortened long sliders for good.
 - Rhythm model: mapper-style condition, 1/12 grid for triplets.
-- Several seeds per song to pick from; a GPU zip; multiple red lines for tempo changes.
+- Several seeds per song to pick from; multiple red lines for tempo changes.
 
 ## Licence and attribution
 

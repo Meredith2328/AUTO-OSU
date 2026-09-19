@@ -12,11 +12,11 @@
 ![AUTO-OSU 主界面](docs/screenshot_zh.png)
 
 <details>
-<summary>亮色主题 / 生成中</summary>
+<summary>亮色主题 / 批量结果</summary>
 
 ![亮色主题](docs/screenshot_en.png)
 
-![生成中](docs/screenshot_busy.png)
+![批量结果](docs/screenshot_busy.png)
 
 </details>
 
@@ -35,13 +35,28 @@
 
 ### 免安装（Windows）
 
-1. 到 [Releases](https://github.com/kanze1/AUTO-OSU/releases) 下载 `AUTO-OSU-<版本>-win64-cpu.zip`（约 550 MB，模型已内置），解压到任意位置。
+1. 到 [Releases](https://github.com/kanze1/AUTO-OSU/releases) 下载 `AUTO-OSU-<版本>-win64-cpu.zip`（模型已内置），解压到任意位置。
 2. 双击 `AUTO-OSU.exe`。
 3. 把歌拖进窗口，勾选难度，点 **生成谱面**。
 4. `.osz` 写到 exe 旁边的 `output` 文件夹，并默认直接在 osu! 里打开（自动导入）。打开 osu! 就能在歌曲列表里找到。
 
 不需要显卡：3 分钟的歌、一个难度，在现代 CPU 上约 1 分钟（16 核实测 70 秒；RTX 4090 上 16 秒）。
 Windows 10 / 11，64 位。
+
+### 一键配置 GPU 加速
+
+在窗口的「计算设备」下点击 **自动配置 GPU 加速**。程序会自动准备 uv、独立的 Python 3.12 和适合显卡驱动的 CUDA 版 PyTorch，完成真实 CUDA 运算检查后立即启用，无需重启窗口。
+
+- 无需预装 Python、uv 或 CUDA Toolkit；需要 NVIDIA 显卡及驱动。
+- 首次联网下载约数 GB；安装进度和详细日志直接显示在窗口中，可以取消。
+- 环境保存在 `%LOCALAPPDATA%\AUTO-OSU\runtime`，不修改系统 Python。重新配置失败时保留原来可用的环境。
+- `auto` 优先使用可用的 GPU；`cpu` 始终使用 CPU；显式选择 `cuda` 时，不可用会报出原因。
+
+### 整个文件夹批量生成
+
+切换 **文件夹批量**，选择或拖入目录，按需勾选「包含子文件夹」，再点击 **批量生成**。程序会扫描支持的音频和视频，并在队列中显示每首歌的状态。
+
+每首歌保存到独立子目录，同名歌曲不会覆盖；坏文件记录错误后继续处理下一首。批次结束会生成 `batch-report-*.json`，包含成功输出、失败原因和运行设备。点击「停止后续任务」会完成当前歌曲，再停止剩余队列。批量模式由你选取生成的 `.osz` 导入 osu!。
 
 ### 支持什么音频
 
@@ -58,11 +73,12 @@ Windows 10 / 11，64 位。
 
 | 区域 | 说明 |
 | --- | --- |
-| 歌曲 | 拖放或点「浏览」选文件。 |
+| 歌曲 | 单曲转换 / 文件夹批量，支持拖放；下方显示处理队列。 |
 | 难度 | Easy / Normal / Hard / Insane 可多选，全部打进同一个 `.osz`。默认 Hard + Insane。 |
 | 输出 | 保存目录；「生成后自动导入 osu!」会直接打开 `.osz`，等于双击它。 |
 | 模型 | 显示模型是否就绪；缺失时一键下载（自动校验）。 |
-| 右上角 | 中 / 英切换，亮 / 暗切换。设置、上次的歌和目录都会记住。 |
+| 计算设备 | 显示实际可用的 CUDA、显卡与显存；支持重新检测和一键配置 GPU 加速。 |
+| 顶部封面 | 中 / 英切换，亮 / 暗切换。设置、上次的歌和目录都会记住。 |
 
 **高级选项**（点「高级选项」展开）：
 
@@ -73,13 +89,18 @@ Windows 10 / 11，64 位。
 | 谱师名 | 写进 `.osu` 的 Creator，默认 AUTO-OSU。 |
 | 星级条件 | 给模型的难度提示，留空按难度默认：Easy 2.0 / Normal 3.2 / Hard 4.5 / Insane 5.5。想让 Hard 更密就填大一点。 |
 | 摆放质量 | 坐标模型的扩散步数：快速 50 / 标准 100 / 精细 200。标准档够用。 |
-| 计算设备 | auto 优先用 CUDA 显卡，没有就用 CPU。 |
 | 生成引擎 | 「AI 模型」是正常模式；「纯规则」不用模型、几秒出图，只在没模型或想对比时用。 |
 | 试听 mp3 | 另存一个原曲压低音量、每个物件加点击声的 mp3，不开 osu! 也能听节奏对不对。 |
 
 ### 命令行
 
 `python -m autoosu 歌曲 [选项]`，exe 也认同样的参数（`AUTO-OSU.exe 歌曲.mp3 -d Hard`）。
+
+```powershell
+python -m autoosu --setup-runtime
+python -m autoosu --check-cuda
+python -m autoosu "D:\Music" --recursive -d Hard Insane -o "D:\Beatmaps"
+```
 
 | 选项 | 说明 |
 | --- | --- |
@@ -93,6 +114,9 @@ Windows 10 / 11，64 位。
 | `--cfg-scale X` | 坐标模型的 classifier-free guidance，默认 1.0 |
 | `--temperature` / `--density` / `--density-bias` / `--decode-steps` | 节奏模型采样参数：温度、目标每小节物件数、"不放"偏置（负数更密）、解码轮数 |
 | `--device auto\|cuda\|cpu` | 计算设备 |
+| `--setup-runtime` | 使用 uv 自动安装并验证应用专属 GPU 环境 |
+| `--check-cuda` | 检查当前实际推理环境（包括自动安装的环境） |
+| `--recursive` | 输入为目录时，包含子文件夹 |
 | `--rules` | 纯规则模式 |
 | `--rhythm-model` / `--coord-model` | 指定模型文件；不指定则在 `models/` 里找 |
 | `--no-coord-model` | 只用节奏模型，摆放走规则 |
@@ -109,7 +133,7 @@ git clone https://github.com/kanze1/AUTO-OSU
 cd AUTO-OSU
 python -m venv .venv && .venv\Scripts\activate       # Windows；Linux/macOS 用 source .venv/bin/activate
 pip install -e .[gui]
-# 有 NVIDIA 显卡（可选）：pip install torch --index-url https://download.pytorch.org/whl/cu130
+python -m autoosu --setup-runtime                     # 可选：自动准备独立 GPU 环境
 python -m autoosu --download                          # 第一次下载模型（约 320 MB）
 python -m autoosu                                     # 打开图形界面
 python -m autoosu "歌曲.mp3" -d Hard Insane -o out    # 命令行
@@ -182,7 +206,7 @@ powershell -ExecutionPolicy Bypass -File scripts/build_exe.ps1            # dist
 
 **osu! 没有自动打开？** 说明 `.osz` 没有关联到 osu!，把生成的 `.osz` 拖进 osu! 窗口即可。
 
-**生成很慢？** CPU 一个难度约一分钟属于正常；摆放质量选「快速」能快一倍；有 NVIDIA 显卡的话用 Python 方式装 CUDA 版 torch。
+**生成很慢？** CPU 一个难度约一分钟属于正常；摆放质量选「快速」能快一倍；有 NVIDIA 显卡可在窗口点击「自动配置 GPU 加速」。
 
 **某个格式解不开？** 先确认文件本身能播放；程序会先用 libsndfile 再用自带的 ffmpeg 解码，都失败会提示具体原因。
 
@@ -190,7 +214,7 @@ powershell -ExecutionPolicy Bypass -File scripts/build_exe.ps1            # dist
 
 - 坐标模型 v1：把滑条要求长度作为逐点条件，根治长滑条缩短。
 - 节奏模型：谱师风格条件、1/12 网格覆盖三连音。
-- 同一首歌多种子出多版供挑选；显卡版 zip；变速歌多红线。
+- 同一首歌多种子出多版供挑选；变速歌多红线。
 
 ## 许可与署名
 
