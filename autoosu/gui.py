@@ -23,6 +23,7 @@ from typing import Dict, Optional, Tuple
 
 from . import __version__
 from .difficulty import PRESETS
+from .mania import MANIA_PRESETS
 from .i18n import AUTHOR, language, set_language, tr
 from .models import MODELS, app_root, ensure_model, find_model
 
@@ -233,6 +234,9 @@ def create_app():
                 w[key].configure(text=tr(key))
             for name in PRESETS:
                 w[f"diff.{name}"].configure(text=tr(f"diff.{name}"))
+            for name in MANIA_PRESETS:
+                w[f"mdiff.{name}"].configure(text=tr(f"mdiff.{name}"))
+            self.update_game_mode()
             w["adv.toggle"].configure(text=tr("adv.hide" if self.advanced_open else "adv.show"))
             self._quality_labels = {k: tr(f"adv.quality.{k}") for k in QUALITY_STEPS}
             w["adv.quality.menu"].configure(values=list(self._quality_labels.values()))
@@ -528,6 +532,9 @@ def create_app():
                 self.widgets[key].configure(state=state)
             for name in PRESETS:
                 self.widgets[f"diff.{name}"].configure(state=state)
+            for name in MANIA_PRESETS:
+                self.widgets[f"mdiff.{name}"].configure(state=state)
+            self.widgets["mode.menu"].configure(state=state)
             for key in ("adv.seed", "adv.bpm", "adv.offset", "adv.creator", "adv.star"):
                 self.widgets[key+".entry"].configure(state=state)
             self.widgets["device.refresh"].configure(state="disabled" if busy or self.cuda_checking else "normal")
@@ -539,6 +546,20 @@ def create_app():
             if self.runtime_installing:
                 self.widgets["run.generate"].configure(text=tr("runtime.install"))
 
+        def change_game_mode(self, label) -> None:
+            self.game_mode_var.set(next((k for k, v in self._game_mode_labels.items() if v == label), "standard"))
+            self.update_game_mode()
+
+        def update_game_mode(self) -> None:
+            w = self.widgets
+            self._game_mode_labels = {"standard": tr("mode.standard"), "mania7k": tr("mode.mania7k")}
+            mania = self.game_mode_var.get() == "mania7k"
+            w["mode.menu"].configure(values=list(self._game_mode_labels.values()))
+            w["mode.menu"].set(self._game_mode_labels["mania7k" if mania else "standard"])
+            (self.diff_options.grid_remove if mania else self.diff_options.grid)()
+            (self.mdiff_options.grid if mania else self.mdiff_options.grid_remove)()
+            w["diff.hint"].configure(text=tr("mode.mania_hint" if mania else "diff.hint"))
+
         def collect_settings(self) -> Dict:
             quality = next((k for k, v in self._quality_labels.items() if v == self.widgets["adv.quality.menu"].get()), "normal")
             engine = next((k for k, v in self._engine_labels.items() if v == self.widgets["adv.engine.menu"].get()), "ml")
@@ -547,6 +568,8 @@ def create_app():
             return {
                 "language": language(), "appearance": self.mode, "song": self.song_var.get(), "out_dir": self.out_var.get(),
                 "difficulties": [n for n, v in self.diff_vars.items() if v.get()],
+                "mania_difficulties": [n for n, v in self.mdiff_vars.items() if v.get()],
+                "game_mode": self.game_mode_var.get(),
                 "open_osu": self.open_osu_var.get(), "seed": self.seed_var.get(), "bpm": self.bpm_var.get(),
                 "offset": self.offset_var.get(), "creator": self.creator_var.get(), "star": self.star_var.get(),
                 "quality": quality, "device": self.device_var.get(), "engine": engine,
@@ -566,10 +589,13 @@ def create_app():
                 return self.show_error(tr("err.file_missing", path=song))
             if s["source_mode"] == "folder" and not song.is_dir():
                 return self.show_error(tr("input.folder_hint"))
-            if not s["difficulties"]:
+            mania = s["game_mode"] == "mania7k"
+            diffs = s["mania_difficulties"] if mania else s["difficulties"]
+            if not diffs:
                 return self.show_error(tr("err.no_diff"))
             found = self.models_present()
-            if s["engine"] == "ml" and not all(found.values()):
+            use_ml = s["engine"] == "ml" and not mania
+            if use_ml and not all(found.values()):
                 return self.show_error(tr("err.no_models"))
 
             def num(v: str):
@@ -602,10 +628,12 @@ def create_app():
             kwargs = dict(
                 seed=seed, bpm=bpm, offset_ms=offset, creator=s["creator"] or "AUTO-OSU", star_rating=star,
                 coord_steps=QUALITY_STEPS[s["quality"]], device=s["device"],
-                rhythm_model=str(found["rhythm"]) if s["engine"] == "ml" else None,
-                coord_model=str(found["coord"]) if s["engine"] == "ml" else None,
+                rhythm_model=str(found["rhythm"]) if use_ml else None,
+                coord_model=str(found["coord"]) if use_ml else None,
             )
-            threading.Thread(target=self.work, args=(song, s["difficulties"], self.last_output_dir, kwargs, s["preview"], s["recursive"]),
+            if mania:
+                kwargs["mode"] = "mania7k"
+            threading.Thread(target=self.work, args=(song, diffs, self.last_output_dir, kwargs, s["preview"], s["recursive"]),
                              daemon=True).start()
 
         def work(self, song: Path, diffs, out_dir: Path, kwargs: Dict, preview: bool, recursive: bool = False) -> None:
@@ -754,7 +782,10 @@ def create_app():
                             text=tr("status.done", file=self.last_osz.name, secs=res["elapsed_s"], device=res["device"]))
                         self.log(tr("result.summary", bpm=res["bpm"], n=len(res["diffs"])))
                         for s in res["diffs"]:
-                            self.log(tr("result.diff", name=s["name"], objects=s["objects"], sliders=s["sliders"], nps=s["nps"]))
+                            if "holds" in s:
+                                self.log(tr("result.mdiff", name=s["name"], objects=s["objects"], holds=s["holds"], nps=s["nps"]))
+                            else:
+                                self.log(tr("result.diff", name=s["name"], objects=s["objects"], sliders=s["sliders"], nps=s["nps"]))
                         self._flash_done()
                         if self._open_after and not self._closing:
                             open_path(self.last_osz)

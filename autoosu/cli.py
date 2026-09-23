@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .difficulty import PRESETS
 from .generate import generate
+from .mania import MANIA_PRESETS
 from .models import MODELS, ensure_model, find_model
 
 
@@ -17,8 +18,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--recursive", action="store_true", help="also scan subfolders for batch generation")
     p.add_argument("--check-cuda", action="store_true", help="check CUDA in this runtime and exit")
     p.add_argument("--setup-runtime", action="store_true", help="use uv to install and verify an app-managed GPU runtime")
-    p.add_argument("-d", "--difficulty", nargs="+", default=["Hard", "Insane"],
-                   metavar="NAME", help=f"difficulties to generate: {', '.join(PRESETS)}")
+    p.add_argument("--mode", choices=("standard", "mania7k"), default="standard",
+                   help="standard = osu!standard (default); mania7k = osu!mania 7 keys")
+    p.add_argument("-d", "--difficulty", nargs="+", default=None, metavar="NAME",
+                   help=f"difficulties to generate: {', '.join(PRESETS)} (standard, default Hard Insane); "
+                        f"{', '.join(MANIA_PRESETS)} (mania7k, default all)")
     p.add_argument("-o", "--out", default="out", help="output directory (default: out)")
     p.add_argument("--seed", type=int, default=0, help="random seed (same seed = same map)")
     p.add_argument("--bpm", type=float, help="override detected BPM")
@@ -111,6 +115,11 @@ def main(argv=None) -> int:
     if not audio.exists():
         print(f"error: {audio} not found", file=sys.stderr)
         return 2
+    mania = args.mode == "mania7k"
+    if args.difficulty is None:
+        args.difficulty = list(MANIA_PRESETS) if mania else ["Hard", "Insane"]
+    if mania:
+        args.rules, args.dump_events, args.debug_plot = True, False, False
     rhythm, coord = resolve_models(args)
     if not args.rules and args.device != "cpu" and not os.environ.get("AUTOOSU_MANAGED_WORKER"):
         from .runtime import active_python, popen, probe_python
@@ -145,7 +154,7 @@ def main(argv=None) -> int:
                 rhythm_model=rhythm, temperature=args.temperature, density=args.density,
                 density_bias=args.density_bias, star_rating=args.star, decode_steps=args.decode_steps,
                 coord_model=coord, coord_steps=args.coord_steps, cfg_scale=args.cfg_scale, device=args.device,
-                on_result=_dump_events if args.dump_events else None,
+                mode=args.mode, on_result=_dump_events if args.dump_events else None,
             )
         except (ValueError, OSError, RuntimeError) as exc:
             print(f"error: {exc}", file=sys.stderr)
@@ -161,7 +170,8 @@ def main(argv=None) -> int:
                    title=args.title, artist=args.artist, creator=args.creator, osu_shift_ms=args.osu_shift,
                    rhythm_model=rhythm, temperature=args.temperature, density=args.density,
                    density_bias=args.density_bias, star_rating=args.star, decode_steps=args.decode_steps,
-                   coord_model=coord, coord_steps=args.coord_steps, cfg_scale=args.cfg_scale, device=args.device)
+                   coord_model=coord, coord_steps=args.coord_steps, cfg_scale=args.cfg_scale, device=args.device,
+                   mode=args.mode)
 
     if args.dump_events:
         _dump_events(res)

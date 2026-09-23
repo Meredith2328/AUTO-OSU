@@ -4,6 +4,7 @@ from __future__ import annotations
 import tkinter as tk
 
 from .difficulty import PRESETS
+from .mania import MANIA_PRESETS
 from .i18n import tr
 from .models import app_root
 
@@ -135,13 +136,27 @@ def build_workspace(app, ctk, dnd_files):
     a.diff_vars = {}
     chosen = set(s.get("difficulties", ["Hard", "Insane"]))
     diff_options = ctk.CTkFrame(right, fg_color="transparent")
-    diff_options.grid(row=1, column=0, sticky="ew")
+    diff_options.grid(row=2, column=0, sticky="ew")
     diff_options.grid_columnconfigure((0, 1), weight=1)
     for i, name in enumerate(PRESETS):
         var = ctk.BooleanVar(value=name in chosen)
         a.diff_vars[name] = var
         w[f"diff.{name}"] = ctk.CTkCheckBox(diff_options, variable=var, font=a.font, height=27, width=135)
         w[f"diff.{name}"].grid(row=i//2, column=i%2, sticky="w", pady=(8, 0))
+    a.game_mode_var = ctk.StringVar(value=s.get("game_mode", "standard"))
+    w["mode.menu"] = ctk.CTkSegmentedButton(right, font=a.font, height=30, command=a.change_game_mode)
+    w["mode.menu"].grid(row=1, column=0, sticky="ew", pady=(8, 0))
+    a.diff_options = diff_options
+    a.mdiff_vars = {}
+    mchosen = set(s.get("mania_difficulties", list(MANIA_PRESETS)))
+    a.mdiff_options = mdiff_options = ctk.CTkFrame(right, fg_color="transparent")
+    mdiff_options.grid(row=2, column=0, sticky="ew")
+    mdiff_options.grid_columnconfigure((0, 1), weight=1)
+    for i, name in enumerate(MANIA_PRESETS):
+        var = ctk.BooleanVar(value=name in mchosen)
+        a.mdiff_vars[name] = var
+        w[f"mdiff.{name}"] = ctk.CTkCheckBox(mdiff_options, variable=var, font=a.font, height=27, width=135)
+        w[f"mdiff.{name}"].grid(row=i//2, column=i%2, sticky="w", pady=(8, 0))
     w["diff.hint"] = ctk.CTkLabel(right, font=a.font, anchor="w", justify="left", wraplength=305, text_color=PALETTE["muted"])
     w["diff.hint"].grid(row=5, column=0, sticky="w", pady=(8, 16))
     device_head = ctk.CTkFrame(right, fg_color="transparent")

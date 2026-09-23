@@ -140,12 +140,21 @@ def generate(audio_path: str | Path, difficulties: List[str], out_dir: str | Pat
              density_bias: float = 0.0, star_rating: Optional[float] = None, decode_steps: int = 12,
              coord_model: Optional[str] = None, coord_steps: int = 100, cfg_scale: float = 1.0,
              device: Optional[str] = None, progress: Optional[ProgressFn] = None,
-             model_cache: Optional[Dict] = None) -> GenerateResult:
+             model_cache: Optional[Dict] = None, mode: str = "standard") -> GenerateResult:
     """Analyse a song and write one .osz with the requested difficulties.
 
     rhythm_model / coord_model: paths to the trained models; without them the rule-based layers run.
     progress(fraction, message) is called as work advances (for GUIs); log(text) gets the human summary.
+    mode="mania7k" writes osu!mania 7K difficulties instead (rule-based; model options are ignored).
     """
+    if mode == "mania7k":
+        from .mania import generate_mania
+
+        return generate_mania(audio_path, difficulties, out_dir, seed=seed, bpm=bpm, offset_ms=offset_ms,
+                              title=title, artist=artist, creator=creator, osu_shift_ms=osu_shift_ms,
+                              log=log, progress=progress)
+    if mode != "standard":
+        raise ValueError(f"unknown mode {mode!r}")
     t0 = _time.perf_counter()
     audio_path, out_dir = Path(audio_path), Path(out_dir)
     presets = [get_preset(d) for d in difficulties]

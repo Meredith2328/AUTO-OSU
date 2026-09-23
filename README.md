@@ -141,6 +141,20 @@ python -m autoosu "歌曲.mp3" -d Hard Insane -o out    # 命令行
 
 Python 3.10 及以上。macOS / Linux 用这种方式运行，exe 只提供 Windows 版。
 
+### osu!mania 7K 模式
+
+把歌拖进窗口前，在顶部模式切换里选「7K Mania」，勾选想要的难度（7K Easy / Normal / Hard / Insane / Expert），点「生成谱面」即可。
+生成的 `.osz` 里每个难度都是 7 键 mania 谱（`Mode: 3`、`CS 7`），含单点、和弦、长条；勾选「生成后打开 osu!」会直接导入游戏。
+
+命令行用 `--mode mania7k`，不加 `-d` 时默认输出全部五个难度：
+
+```bash
+python -m autoosu "歌曲.mp3" --mode mania7k -o out
+python -m autoosu "歌曲.mp3" --mode mania7k -d Normal Hard -o out
+```
+
+7K 模式走规则生成，不需要下载模型。难度梯度参照社区 7K 谱面：Easy 约 1.2★、Normal 约 2★、Hard 约 3★、Insane 约 4.3★、Expert 约 5–5.8★（具体星数随歌曲 BPM 与密度浮动）。
+
 ## 效果与局限
 
 - **节奏贴鼓点。** 节奏模型在验证集上与人类谱面的 onset F1 达到 0.96；作为参照，同一首歌两个人类难度之间只有 0.74。

@@ -132,6 +132,7 @@ class Beatmap:
     preview_time: int = -1
     stack_leniency: float = 0.7
     background: str = ""                 # image file name inside the .osz, "" = none
+    mode: int = 0                        # 0 osu!standard, 3 osu!mania (cs = key count)
     timing_points: List[TimingPoint] = field(default_factory=list)
     breaks: List[Break] = field(default_factory=list)
     hit_objects: List[HitObject] = field(default_factory=list)
@@ -151,9 +152,11 @@ class Beatmap:
         a("Countdown: 0")
         a("SampleSet: Soft")
         a(f"StackLeniency: {self.stack_leniency}")
-        a("Mode: 0")
+        a(f"Mode: {self.mode}")
         a("LetterboxInBreaks: 0")
         a("WidescreenStoryboard: 0")
+        if self.mode == 3:
+            a("SpecialStyle: 0")
         a("")
         a("[Editor]")
         a(f"DistanceSpacing: {self.distance_spacing}")
