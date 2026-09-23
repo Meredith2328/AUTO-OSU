@@ -11,6 +11,7 @@ TYPE_CIRCLE = 1
 TYPE_SLIDER = 2
 TYPE_NEW_COMBO = 4
 TYPE_SPINNER = 8
+TYPE_HOLD = 128
 
 HS_NORMAL = 0
 HS_WHISTLE = 2
@@ -90,6 +91,19 @@ class Spinner(HitObject):
 
 
 @dataclass
+class Hold(HitObject):
+    """osu!mania long note. The x coordinate selects the lane."""
+    end: int = 0
+
+    @property
+    def end_time(self) -> int:
+        return self.end
+
+    def to_line(self) -> str:
+        return f"{self.x},{self.y},{self.time},{self._type(TYPE_HOLD)},{self.hitsound},{self.end}:0:0:0:0:"
+
+
+@dataclass
 class TimingPoint:
     time: int
     beat_length: float          # ms per beat (uninherited) or negative SV percent (inherited)
@@ -132,6 +146,7 @@ class Beatmap:
     preview_time: int = -1
     stack_leniency: float = 0.7
     background: str = ""                 # image file name inside the .osz, "" = none
+    mode: int = 0                           # 0 = osu!standard, 3 = osu!mania
     timing_points: List[TimingPoint] = field(default_factory=list)
     breaks: List[Break] = field(default_factory=list)
     hit_objects: List[HitObject] = field(default_factory=list)
@@ -151,7 +166,7 @@ class Beatmap:
         a("Countdown: 0")
         a("SampleSet: Soft")
         a(f"StackLeniency: {self.stack_leniency}")
-        a("Mode: 0")
+        a(f"Mode: {self.mode}")
         a("LetterboxInBreaks: 0")
         a("WidescreenStoryboard: 0")
         a("")

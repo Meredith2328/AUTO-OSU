@@ -12,8 +12,10 @@ from .models import MODELS, ensure_model, find_model
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="autoosu", description="Generate an osu!standard beatmap from a song.")
+    p = argparse.ArgumentParser(prog="autoosu", description="Generate an osu! beatmap from a song.")
     p.add_argument("audio", nargs="?", help="audio/video file, or a folder for batch generation")
+    p.add_argument("--mode", choices=("standard", "mania4k"), default="standard",
+                   help="game mode (default: standard; mania4k is rules-only)")
     p.add_argument("--recursive", action="store_true", help="also scan subfolders for batch generation")
     p.add_argument("--check-cuda", action="store_true", help="check CUDA in this runtime and exit")
     p.add_argument("--setup-runtime", action="store_true", help="use uv to install and verify an app-managed GPU runtime")
@@ -107,12 +109,20 @@ def main(argv=None) -> int:
         from .gui import run_gui
 
         return run_gui()
+    model_flags = {"--rules", "--rhythm-model", "--coord-model", "--no-coord-model", "--download",
+                   "--device", "--temperature", "--density", "--density-bias", "--decode-steps",
+                   "--coord-steps", "--cfg-scale", "--star"}
+    supplied = sys.argv[1:] if argv is None else argv
+    if args.mode == "mania4k" and any(arg.split("=", 1)[0] in model_flags for arg in supplied):
+        print("error: mania4k is rules-only; standard model/checkpoint options do not apply",
+              file=sys.stderr)
+        return 2
     audio = Path(args.audio)
     if not audio.exists():
         print(f"error: {audio} not found", file=sys.stderr)
         return 2
-    rhythm, coord = resolve_models(args)
-    if not args.rules and args.device != "cpu" and not os.environ.get("AUTOOSU_MANAGED_WORKER"):
+    rhythm, coord = (None, None) if args.mode == "mania4k" else resolve_models(args)
+    if args.mode == "standard" and not args.rules and args.device != "cpu" and not os.environ.get("AUTOOSU_MANAGED_WORKER"):
         from .runtime import active_python, popen, probe_python
         python = active_python()
         if python and python.resolve() != Path(sys.executable).resolve():
@@ -128,7 +138,7 @@ def main(argv=None) -> int:
                     forwarded += ["--coord-model", str(Path(coord).resolve())]
                 return popen([python, "-I", "-m", "autoosu.cli", *forwarded],
                              stdout=sys.stdout, stderr=sys.stderr).wait()
-    if not args.rules:
+    if args.mode == "standard" and not args.rules:
         missing = [n for n, p in (("rhythm", rhythm), ("coord", coord)) if p is None and not (n == "coord" and args.no_coord_model)]
         if missing:
             print(f"note: no {' / '.join(missing)} model found in the models folder; add --download to fetch "
@@ -145,6 +155,7 @@ def main(argv=None) -> int:
                 rhythm_model=rhythm, temperature=args.temperature, density=args.density,
                 density_bias=args.density_bias, star_rating=args.star, decode_steps=args.decode_steps,
                 coord_model=coord, coord_steps=args.coord_steps, cfg_scale=args.cfg_scale, device=args.device,
+                mode=args.mode,
                 on_result=_dump_events if args.dump_events else None,
             )
         except (ValueError, OSError, RuntimeError) as exc:
@@ -161,7 +172,8 @@ def main(argv=None) -> int:
                    title=args.title, artist=args.artist, creator=args.creator, osu_shift_ms=args.osu_shift,
                    rhythm_model=rhythm, temperature=args.temperature, density=args.density,
                    density_bias=args.density_bias, star_rating=args.star, decode_steps=args.decode_steps,
-                   coord_model=coord, coord_steps=args.coord_steps, cfg_scale=args.cfg_scale, device=args.device)
+                   coord_model=coord, coord_steps=args.coord_steps, cfg_scale=args.cfg_scale, device=args.device,
+                   mode=args.mode)
 
     if args.dump_events:
         _dump_events(res)

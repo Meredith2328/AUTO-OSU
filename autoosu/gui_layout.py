@@ -88,6 +88,7 @@ def build_workspace(app, ctk, dnd_files):
     a.star_var = ctk.StringVar(value=s.get("star", ""))
     a.quality_var = ctk.StringVar(value=s.get("quality", "normal"))
     a.engine_var = ctk.StringVar(value=s.get("engine", "ml"))
+    a.map_mode_var = ctk.StringVar(value=s.get("map_mode", "standard"))
     a.preview_var = ctk.BooleanVar(value=s.get("preview", False))
 
     w["song.section"] = ctk.CTkLabel(left, font=a.font_bold, anchor="w")
@@ -144,7 +145,12 @@ def build_workspace(app, ctk, dnd_files):
         w[f"diff.{name}"].grid(row=i//2, column=i%2, sticky="w", pady=(8, 0))
     w["diff.hint"] = ctk.CTkLabel(right, font=a.font, anchor="w", justify="left", wraplength=305, text_color=PALETTE["muted"])
     w["diff.hint"].grid(row=5, column=0, sticky="w", pady=(8, 16))
-    device_head = ctk.CTkFrame(right, fg_color="transparent")
+    w["mode.section"] = ctk.CTkLabel(right, font=a.font_bold, anchor="w")
+    w["mode.section"].grid(row=3, column=0, sticky="w", pady=(12, 4))
+    w["mode.menu"] = ctk.CTkOptionMenu(right, font=a.font, values=["osu!standard"],
+                                          command=a.change_game_mode)
+    w["mode.menu"].grid(row=4, column=0, sticky="ew")
+    device_head = w["device.frame"] = ctk.CTkFrame(right, fg_color="transparent")
     device_head.grid(row=6, column=0, sticky="ew")
     device_head.grid_columnconfigure(0, weight=1)
     w["adv.device"] = ctk.CTkLabel(device_head, font=a.font_bold, anchor="w")

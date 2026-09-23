@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-from .beatmap import Beatmap, Slider, Spinner
+from .beatmap import Beatmap, Hold, Slider, Spinner
 
 
 def _tick(sr: int, freq: float, ms: float, amp: float) -> np.ndarray:
@@ -46,7 +46,7 @@ def render_preview(audio: Path, beatmap: Beatmap, out: Path, song_gain: float = 
             add(o.time, noise)
             continue
         add(o.time, head_nc if o.new_combo else head)
-        if isinstance(o, Slider):
+        if isinstance(o, (Slider, Hold)):
             add(o.end_time, tail)
 
     peak = float(np.abs(mix).max()) or 1.0

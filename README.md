@@ -5,7 +5,7 @@
 [![tests](https://github.com/kanze1/AUTO-OSU/actions/workflows/test.yml/badge.svg)](https://github.com/kanze1/AUTO-OSU/actions/workflows/test.yml)
 [![license](https://img.shields.io/badge/license-MIT%20%2B%20%E7%BD%B2%E5%90%8D-4fb8ff)](LICENSE)
 
-**丢进一首歌，一分钟后拿到一张能直接打的 osu!standard 谱面。**
+**丢进一首歌，一分钟后拿到一张能直接打的 osu!standard 或 osu!mania 4K 谱面。**
 
 [English](README.en.md) · [下载](https://github.com/kanze1/AUTO-OSU/releases) · [怎么用](#怎么用) · [效果与局限](#效果与局限) · [原理](#原理) · [常见问题](#常见问题)
 
@@ -39,6 +39,8 @@
 2. 双击 `AUTO-OSU.exe`。
 3. 把歌拖进窗口，勾选难度，点 **生成谱面**。
 4. `.osz` 写到 exe 旁边的 `output` 文件夹，并默认直接在 osu! 里打开（自动导入）。打开 osu! 就能在歌曲列表里找到。
+
+游戏模式默认是 **osu!standard**，原有行为不变。选择 **osu!mania 4K（规则生成）** 会生成四轨键盘谱；它使用独立规则生成器，不会加载或冒充使用只以 standard 谱面训练的模型。
 
 不需要显卡：3 分钟的歌、一个难度，在现代 CPU 上约 1 分钟（16 核实测 70 秒；RTX 4090 上 16 秒）。
 Windows 10 / 11，64 位。
@@ -74,6 +76,7 @@ Windows 10 / 11，64 位。
 | 区域 | 说明 |
 | --- | --- |
 | 歌曲 | 单曲转换 / 文件夹批量，支持拖放；下方显示处理队列。 |
+| 游戏模式 | 默认 osu!standard；也可选规则式 osu!mania 4K。 |
 | 难度 | Easy / Normal / Hard / Insane 可多选，全部打进同一个 `.osz`。默认 Hard + Insane。 |
 | 输出 | 保存目录；「生成后自动导入 osu!」会直接打开 `.osz`，等于双击它。 |
 | 模型 | 显示模型是否就绪；缺失时一键下载（自动校验）。 |
@@ -100,10 +103,12 @@ Windows 10 / 11，64 位。
 python -m autoosu --setup-runtime
 python -m autoosu --check-cuda
 python -m autoosu "D:\Music" --recursive -d Hard Insane -o "D:\Beatmaps"
+python -m autoosu "D:\Music\song.mp3" --mode mania4k -d Hard --seed 42 -o "D:\Beatmaps"
 ```
 
 | 选项 | 说明 |
 | --- | --- |
+| `--mode standard\|mania4k` | 游戏模式，默认 `standard`；`mania4k` 固定使用规则引擎 |
 | `-d Easy Normal Hard Insane` | 要生成的难度 |
 | `-o 目录` | 输出目录，默认 `out` |
 | `--seed N` | 随机种子 |
@@ -126,6 +131,8 @@ python -m autoosu "D:\Music" --recursive -d Hard Insane -o "D:\Beatmaps"
 | `--debug-plot` | 另存分析图：响度与 kiai 段、onset 与拍线、各难度选中的音符 |
 | `--dump-events` | 打印每个物件的时间、类型、拍位 |
 
+`mania4k` 由规则生成并固定在 CPU 上运行。显式传入 `--rules` 或模型专用参数（包括 `--device`）会报错并退出，不会生成文件；这些参数只适用于 standard。
+
 ### Python 安装
 
 ```bash
@@ -147,6 +154,7 @@ Python 3.10 及以上。macOS / Linux 用这种方式运行，exe 只提供 Wind
 - **摆放像人写的。** 坐标模型从纯噪声生成坐标，跳、串、滑条形状都是学来的；每条滑条都经过贴合检查，不会出屏幕。
 - **还差的地方。** 一条红线；滑条长度不是模型输入，快歌上的长滑条偶尔被缩短（会补绿线保证时长正确）；
   打击音效只有基于鼓的简单 whistle / clap / finish；没有 storyboard。投稿之前请在编辑器里过一遍。
+- **mania 4K 是诚实的规则式首版。** 它把检测到的节奏放入四个固定轨道，根据难度控制密度、和弦和长按，并阻止同轨长按与后续物件重叠；随机种子可复现布局。它没有使用或训练 mania 模型，也不声称达到人工谱师质量。当前仍是一条红线，轨道编排不理解指法流派；请在 osu! 编辑器中检查 timing、可读性和手感后再分享。
 
 ## 原理
 
@@ -155,6 +163,8 @@ Python 3.10 及以上。macOS / Linux 用这种方式运行，exe 只提供 Wind
 **分析与定时（规则）。** 打击 / 旋律分离，分频段（底鼓 / 军鼓 / 镲）算 onset 包络；tempogram 估 BPM 并纠正倍频；
 在波形上做 1 ms 精度的偏移校准；用底鼓、和声变化和响度找小节起拍；按响度分段找 kiai。
 物件统一比音频瞬态提前 26 ms 写入，这是 ranked 谱面的普遍惯例，玩家的偏移设置都按它校准。
+
+**mania 4K（规则）。** 复用相同的音频分析、定时、元数据、封面和 `.osz` 打包；每个难度从节奏网格筛选音符，再以 seeded 随机分配四轨，优先换手并减少连续同轨。强拍可生成受控的双押/三押，持续声音可生成量化长按；任何仍被长按占用的轨道都不会接收新物件。输出明确写入 `Mode:3` 和 `CircleSize:4`。
 
 **节奏模型** `rhythm_v0.pt`，约 2900 万参数。1/4 拍网格上的双向 Transformer：每个 tick 看 ±80 ms 的梅尔频谱、
 在小节里的位置、局部响度，加上要求的星级 / CS / AR / OD / HP，预测六类之一（无 / 圈 / 滑条头 / 身 / 尾 / 转盘），

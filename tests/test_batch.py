@@ -100,3 +100,16 @@ def test_cache_invalidates_when_model_file_changes(tmp_path):
     checkpoint.write_bytes(b"different checkpoint")
     assert cached_model(cache, "rhythm", str(checkpoint), "cpu", loader) is not first
     assert len(calls) == 2
+
+
+def test_batch_forwards_mania_mode(tmp_path, monkeypatch):
+    source = tmp_path/"input"
+    touch(source/"song.wav")
+    seen = []
+    def generate(path, diffs, out, **kwargs):
+        seen.append(kwargs["mode"])
+        return SimpleNamespace(osz=out/"map.osz", device="cpu")
+    monkeypatch.setattr(batch, "generate", generate)
+    result = batch.generate_batch(source, ["Hard"], tmp_path/"out", mode="mania4k", log=lambda _: None)
+    assert result.succeeded == 1
+    assert seen == ["mania4k"]

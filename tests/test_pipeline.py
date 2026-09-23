@@ -46,6 +46,7 @@ def test_osz_contents(result):
         assert section in text
     assert "AudioFilename: audio.mp3" in text
     assert "Title:Synth Song" in text and "Artist:Test Artist" in text
+    assert "Mode: 0" in text
 
 
 def sv_at(beatmap, t):
