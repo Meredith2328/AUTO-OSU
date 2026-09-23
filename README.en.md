@@ -143,6 +143,18 @@ python -m autoosu "song.mp3" -d Hard Insane -o out    # command line
 
 Python 3.10 or newer. This is also how to run it on macOS / Linux; the exe is Windows only.
 
+### osu!mania 7K mode
+
+Pick "7K Mania" in the mode switch at the top of the window, tick the tiers you want (7K Easy / Normal / Hard / Insane / Expert), drop a song in and press Generate. Every difficulty is a 7-key mania map (`Mode: 3`, `CS 7`) with single notes, chords and long notes.
+
+On the command line use `--mode mania7k`; without `-d` all five tiers are written:
+
+```bash
+python -m autoosu "song.mp3" --mode mania7k -o out
+```
+
+7K mode is rule-based and needs no model. The ladder follows community 7K sets: Easy ~1.2★, Normal ~2★, Hard ~3★, Insane ~4.3★, Expert ~5–5.8★.
+
 ## Quality and limits
 
 - **The rhythm sits on the drums.** On the validation set the rhythm model reaches an onset F1 of 0.96 against the human map; two human difficulties of the same song agree at only 0.74.
