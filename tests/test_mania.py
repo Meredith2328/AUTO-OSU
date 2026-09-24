@@ -99,7 +99,7 @@ def test_cli_rejects_standard_model_options_for_mania(tmp_path, capsys):
     audio.touch()
     for options in (("--download",), ("--density=4",), ("--device", "cuda"), ("--coord-steps=10",)):
         assert main([str(audio), "--mode", "mania4k", "-o", str(tmp_path / "out"), *options]) == 2
-        assert "rules-only" in capsys.readouterr().err
+        assert "standard model/checkpoint options" in capsys.readouterr().err
         assert not (tmp_path / "out").exists()
 
 
@@ -110,7 +110,7 @@ def test_python_module_cli_returns_error_without_output(tmp_path):
     proc = subprocess.run([sys.executable, "-m", "autoosu", str(audio), "--mode", "mania4k",
                            "--density=4", "-o", str(out)], capture_output=True, text=True)
     assert proc.returncode == 2
-    assert "rules-only" in proc.stderr
+    assert "standard model/checkpoint options" in proc.stderr
     assert not out.exists()
 
 

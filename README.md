@@ -40,7 +40,7 @@
 3. 把歌拖进窗口，勾选难度，点 **生成谱面**。
 4. `.osz` 写到 exe 旁边的 `output` 文件夹，并默认直接在 osu! 里打开（自动导入）。打开 osu! 就能在歌曲列表里找到。
 
-游戏模式默认是 **osu!standard**，原有行为不变。选择 **osu!mania 4K（规则生成）** 会生成四轨键盘谱；它使用独立规则生成器，不会加载或冒充使用只以 standard 谱面训练的模型。
+游戏模式默认是 **osu!standard**，原有行为不变。选择 **osu!mania 4K（规则生成）** 会生成四轨键盘谱；可选的 `--mania-model` 则加载单独用真实 4K 谱训练的小模型。两者都不会把仅以 standard 谱训练的模型冒充 mania 模型。
 
 不需要显卡：3 分钟的歌、一个难度，在现代 CPU 上约 1 分钟（16 核实测 70 秒；RTX 4090 上 16 秒）。
 Windows 10 / 11，64 位。
@@ -108,7 +108,10 @@ python -m autoosu "D:\Music\song.mp3" --mode mania4k -d Hard --seed 42 -o "D:\Be
 
 | 选项 | 说明 |
 | --- | --- |
-| `--mode standard\|mania4k` | 游戏模式，默认 `standard`；`mania4k` 固定使用规则引擎 |
+| `--mode standard\|mania4k` | 游戏模式，默认 `standard`；`mania4k` 默认规则生成，可选专用模型 |
+| `--mania-model PATH` | 用本地训练的专用 mania 4K checkpoint 生成；GUI 仍用规则生成 |
+| `--mania-device auto\|mps\|cpu` | mania 模型推理设备，Mac 默认优先 MPS |
+| `--mania-target-nps X` / `--mania-threshold X` | 可选：覆盖模型难度条件或验证集校准的起点阈值 |
 | `-d Easy Normal Hard Insane` | 要生成的难度 |
 | `-o 目录` | 输出目录，默认 `out` |
 | `--seed N` | 随机种子 |
@@ -131,7 +134,18 @@ python -m autoosu "D:\Music\song.mp3" --mode mania4k -d Hard --seed 42 -o "D:\Be
 | `--debug-plot` | 另存分析图：响度与 kiai 段、onset 与拍线、各难度选中的音符 |
 | `--dump-events` | 打印每个物件的时间、类型、拍位 |
 
-`mania4k` 由规则生成并固定在 CPU 上运行。显式传入 `--rules` 或模型专用参数（包括 `--device`）会报错并退出，不会生成文件；这些参数只适用于 standard。
+`mania4k` 不指定 `--mania-model` 时仍由规则在 CPU 生成；指定后由独立模型预测起点、和弦和长按长度，规则只负责防止同轨重叠及裁剪音频边界。standard 专用参数（包括 `--device`）在 mania 模式会报错；mania 参数在 standard 模式也会报错。
+
+本地训练实验入口（需 Python 3.10+、PyTorch、音频依赖；输入是**本地真实** mania 4K `.osz`，不会上传音频）：
+
+```bash
+python -m autoosu.ml.mania_data --input /path/to/osz --out /path/to/prepared --seed 42
+python -m autoosu.ml.mania_train --data /path/to/prepared --out /path/to/mania4k.pt --device auto --seed 42 --steps 3000 --batch 2 --length 128 --eval-every 200 --patience 4
+python -m autoosu.ml.mania_eval --data /path/to/prepared --checkpoint /path/to/mania4k.pt --split val --out /path/to/val.json
+python -m autoosu song.ogg --mode mania4k --mania-model /path/to/mania4k.pt -d Hard -o /path/to/output
+```
+
+预处理把同歌手标题或相同音频哈希的谱面放在同一个 train/val/test 组，按 1/8 拍网格保留真实四轨音符。先在 val 上定阈值，再仅一次评 test；评估报告区分原谱头时间和量化网格的 F1。训练所得 checkpoint 不随应用或已有 standard 模型下载提供。实际歌曲自动估 BPM/offset 可能与原谱不同，生成后仍需人工检查。
 
 ### Python 安装
 
@@ -154,7 +168,7 @@ Python 3.10 及以上。macOS / Linux 用这种方式运行，exe 只提供 Wind
 - **摆放像人写的。** 坐标模型从纯噪声生成坐标，跳、串、滑条形状都是学来的；每条滑条都经过贴合检查，不会出屏幕。
 - **还差的地方。** 一条红线；滑条长度不是模型输入，快歌上的长滑条偶尔被缩短（会补绿线保证时长正确）；
   打击音效只有基于鼓的简单 whistle / clap / finish；没有 storyboard。投稿之前请在编辑器里过一遍。
-- **mania 4K 是诚实的规则式首版。** 它把检测到的节奏放入四个固定轨道，根据难度控制密度、和弦和长按，并阻止同轨长按与后续物件重叠；随机种子可复现布局。它没有使用或训练 mania 模型，也不声称达到人工谱师质量。当前仍是一条红线，轨道编排不理解指法流派；请在 osu! 编辑器中检查 timing、可读性和手感后再分享。
+- **mania 4K 默认是规则式首版，也提供本地训练的实验模型入口。** 规则生成控制密度、和弦与长按；模型入口用真实 4K 谱学习音频、节拍与难度到四轨事件的关系。两个入口都不声称达到人工谱师质量。当前仍是一条红线，轨道编排不理解指法流派；请在 osu! 编辑器中检查 timing、可读性和手感后再分享。
 
 ## 原理
 

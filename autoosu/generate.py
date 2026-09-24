@@ -92,7 +92,8 @@ def effective_preset(preset: DifficultyPreset, timing: Timing) -> DifficultyPres
 def build_beatmap(preset: DifficultyPreset, timing: Timing, objects: List[HitObject],
                   kiai: List[tuple], audio_filename: str, title: str, artist: str,
                   creator: str, shift_ms: int = OSU_TIMING_SHIFT_MS,
-                  sv_overrides: Sequence[SvOverride] = (), mode: str = "standard") -> Beatmap:
+                  sv_overrides: Sequence[SvOverride] = (), mode: str = "standard",
+                  mania_model_used: bool = False) -> Beatmap:
     apply_shift(objects, shift_ms)
     tps = [TimingPoint(int(round(timing.offset_ms)) - shift_ms, timing.beat_length, uninherited=True)]
     for start, end in kiai:
@@ -120,7 +121,8 @@ def build_beatmap(preset: DifficultyPreset, timing: Timing, objects: List[HitObj
         preview_time=preview, timing_points=tps,
         breaks=compute_breaks(objects, preset.ar), hit_objects=objects,
         mode=3 if mode == "mania4k" else 0,
-        tags="autoosu rules-generated mania 4k kanzei" if mode == "mania4k" else "autoosu ai-generated kanzei",
+        tags=("autoosu model-generated mania 4k kanzei" if mania_model_used else
+              "autoosu rules-generated mania 4k kanzei") if mode == "mania4k" else "autoosu ai-generated kanzei",
     )
 
 
@@ -148,7 +150,10 @@ def generate(audio_path: str | Path, difficulties: List[str], out_dir: str | Pat
              density_bias: float = 0.0, star_rating: Optional[float] = None, decode_steps: int = 12,
              coord_model: Optional[str] = None, coord_steps: int = 100, cfg_scale: float = 1.0,
              device: Optional[str] = None, progress: Optional[ProgressFn] = None,
-             model_cache: Optional[Dict] = None, mode: str = "standard") -> GenerateResult:
+             model_cache: Optional[Dict] = None, mode: str = "standard",
+             mania_model: Optional[str] = None, mania_device: str = "auto",
+             mania_target_nps: Optional[float] = None,
+             mania_threshold: Optional[float] = None) -> GenerateResult:
     """Analyse a song and write one .osz with the requested difficulties.
 
     rhythm_model / coord_model: paths to the trained models; without them the rule-based layers run.
@@ -157,7 +162,9 @@ def generate(audio_path: str | Path, difficulties: List[str], out_dir: str | Pat
     if mode not in ("standard", "mania4k"):
         raise ValueError(f"Unknown game mode {mode!r}; choose standard or mania4k")
     if mode == "mania4k" and (rhythm_model or coord_model):
-        raise ValueError("osu!mania 4K uses its rule-based generator; bundled models are standard-only")
+        raise ValueError("standard rhythm/coordinate checkpoints cannot generate mania 4K")
+    if mode != "mania4k" and mania_model:
+        raise ValueError("--mania-model requires --mode mania4k")
     t0 = _time.perf_counter()
     audio_path, out_dir = Path(audio_path), Path(out_dir)
     presets = [get_preset(d) for d in difficulties]
@@ -165,6 +172,14 @@ def generate(audio_path: str | Path, difficulties: List[str], out_dir: str | Pat
         raise ValueError("Choose at least one difficulty")
     dev = pick_device(device) if (rhythm_model or coord_model) else "cpu"
     cache = model_cache if model_cache is not None else {}
+    mania_net = mania_ckpt = None
+    if mania_model:
+        from .ml.mania_infer import choose_device
+        from .ml.mania_model import ManiaNet
+
+        dev = choose_device(mania_device)
+        mania_net, mania_ckpt = cached_model(cache, "mania4k", mania_model, dev,
+                                            ManiaNet.from_checkpoint)
     report = progress or (lambda f, m: None)
 
     report(0.0, "load")
@@ -213,6 +228,11 @@ def generate(audio_path: str | Path, difficulties: List[str], out_dir: str | Pat
         report(0.25, "load coordinate model")
         cm = cached_model(cache, "coord", coord_model, dev, load_coord_model)
         log(f"      coordinate model {Path(coord_model).name} on {dev}")
+    if mania_net is not None:
+        from .ml.sample import song_mel_uint8
+
+        mel = song_mel_uint8(audio_path)
+        log(f"      dedicated mania 4K model {Path(mania_model).name} on {dev}")
 
     log("[4/4] generating difficulties")
     diffs: List[DiffResult] = []
@@ -224,13 +244,22 @@ def generate(audio_path: str | Path, difficulties: List[str], out_dir: str | Pat
         rng = np.random.default_rng(seed * 1000 + i)
         report(base, f"{preset.name}: rhythm")
         if mode == "mania4k":
-            from .mania import build_mania_objects
+            if mania_net is not None:
+                from .ml.mania_infer import generate_model_objects
 
-            events, objects = build_mania_objects(
-                analysis, timing, preset, rng, sections,
-                min_time_ms=max(0, osu_shift_ms),
-                max_time_ms=int(analysis.duration * 1000) + min(0, osu_shift_ms),
-            )
+                events, objects = generate_model_objects(
+                    mel, timing, analysis.duration * 1000, preset, sections,
+                    mania_net, mania_ckpt, dev, osu_shift_ms,
+                    target_nps=mania_target_nps, threshold=mania_threshold,
+                    seed=seed * 1000 + i)
+            else:
+                from .mania import build_mania_objects
+
+                events, objects = build_mania_objects(
+                    analysis, timing, preset, rng, sections,
+                    min_time_ms=max(0, osu_shift_ms),
+                    max_time_ms=int(analysis.duration * 1000) + min(0, osu_shift_ms),
+                )
         elif model is not None:
             from .ml.sample import generate_rhythm
 
@@ -255,7 +284,7 @@ def generate(audio_path: str | Path, difficulties: List[str], out_dir: str | Pat
         else:
             objects = place(events, preset, timing, rng, sv_sections)
         bm = build_beatmap(preset, timing, objects, kiai, audio_file.name, title, artist, creator, osu_shift_ms,
-                           sv_overrides=overrides, mode=mode)
+                           sv_overrides=overrides, mode=mode, mania_model_used=mania_net is not None)
         if background:
             bm.background = background.name
         res = DiffResult(preset, events, bm)
