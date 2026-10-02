@@ -42,7 +42,7 @@ If it helps you, a ⭐ **star** means a lot. — kanzei
 3. Drag a song onto the window, tick difficulties, click **Generate**.
 4. The `.osz` is written to the `output` folder next to the exe and, by default, opened in osu! (it imports itself). Open osu! and it is in the song list.
 
-The game mode defaults to **osu!standard**, preserving the existing behaviour. Select **osu!mania 4K (rules)** for a four-key map. An optional `--mania-model` loads a separate small model trained on real 4K maps; neither path misrepresents the standard-only models as mania models.
+The game mode defaults to **osu!standard**, preserving the existing behaviour. Select **osu!mania 4K (ranked-calibrated)** for a four-key map from the dedicated 4K engine: exact (multi-)red-line timing, note and lane-pattern models learned from ranked 4K charts, and difficulties calibrated with osu!'s star-rating algorithm. Every note is on the beat grid and on an audible attack, and every chart is verified before it is written. The earlier rule-based generator (`--mania-engine rules`) and `--mania-model` remain available; standard-only models are never presented as mania models.
 
 No GPU needed: a 3-minute song, one difficulty, takes about a minute on a modern CPU (70 s measured on 16 cores; 16 s on an RTX 4090).
 Windows 10 / 11, 64-bit.
@@ -78,7 +78,7 @@ ffmpeg ships with the program; nothing to install.
 | Area | What it does |
 | --- | --- |
 | Song | Single song / Folder batch, drag and drop or Browse, with a processing queue. |
-| Game mode | osu!standard by default, or rule-based osu!mania 4K. |
+| Game mode | osu!standard by default, or osu!mania 4K (ranked-calibrated engine). |
 | Difficulties | Easy / Normal / Hard / Insane, any combination, all packed into one `.osz`. Default Hard + Insane. |
 | Output | Target folder; "Import into osu! when done" opens the `.osz`, same as double-clicking it. |
 | Models | Shows whether the models are present; one-click download if not (checksums verified). |
@@ -110,7 +110,9 @@ python -m autoosu "D:\Music\song.mp3" --mode mania4k -d Hard --seed 42 -o "D:\Be
 
 | Option | Meaning |
 | --- | --- |
-| `--mode standard\|mania4k` | game mode; defaults to `standard`. `mania4k` uses rules unless a dedicated model is supplied |
+| `--mode standard\|mania4k` | game mode; defaults to `standard`. `mania4k` uses the ranked-calibrated engine |
+| `--mania-engine ranked\|rules` | mania 4K engine: `ranked` (default, see [docs/mania4k_engine.md](docs/mania4k_engine.md)) or the earlier rules |
+| `--mania-stars X` | ranked engine: calibrate a single difficulty to this star rating (e.g. `-d Hard --mania-stars 3.5`) |
 | `--mania-model PATH` | generate with a locally trained dedicated mania 4K checkpoint; the GUI still uses rules |
 | `--mania-device auto\|mps\|cpu` | mania inference device; auto prefers MPS on Mac |
 | `--mania-target-nps X` / `--mania-threshold X` | optionally override the difficulty condition or validation-calibrated onset threshold |
@@ -136,7 +138,7 @@ python -m autoosu "D:\Music\song.mp3" --mode mania4k -d Hard --seed 42 -o "D:\Be
 | `--debug-plot` | save an analysis image: loudness and kiai sections, onsets and beat grid, chosen notes per difficulty |
 | `--dump-events` | print every object with time, type and beat |
 
-Without `--mania-model`, `mania4k` still uses CPU rules. With a dedicated checkpoint, the model predicts onsets, chords, and hold lengths; constraints prevent same-lane overlap and notes past the audio end. Standard-only options (including `--device`) are rejected in mania mode, and mania options are rejected in standard mode.
+`mania4k` uses the ranked-calibrated engine by default (CPU is fine; the first run downloads the 80 MB Beat This! tracker weights, or put `beat_this-final0.ckpt` into the models folder). `--mania-engine rules` selects the earlier rules; with `--mania-model` the experimental checkpoint predicts onsets, chords, and hold lengths. Standard-only options (including `--device`) are rejected in mania mode, and mania options are rejected in standard mode.
 
 Local experimental training (Python 3.10+, PyTorch, and audio dependencies; input consists of **real local** mania 4K `.osz` files and audio is never uploaded):
 
@@ -170,7 +172,7 @@ Python 3.10 or newer. This is also how to run it on macOS / Linux; the exe is Wi
 - **Placement looks human.** The coordinate model generates coordinates from pure noise; jumps, streams and slider shapes are learned. Every slider is fitted so it stays on screen.
 - **What is still missing.** One red line per song; slider length is not a model input yet, so long sliders on fast songs are occasionally shortened (a green line keeps the timing right);
   hitsounds are simple drum-based whistle / clap / finish; no storyboard. Check the map in the editor before submitting it anywhere.
-- **mania 4K defaults to a rules-based first version, with an experimental locally trained model path.** Rules control density, chords, and holds; the dedicated model learns audio, beat, and difficulty conditions from real 4K maps. Neither path claims to match a human mapper. It still uses one timing point and has no fingering-style understanding; check timing, readability, and feel in the osu! editor before sharing.
+- **mania 4K uses the ranked-calibrated engine.** Timing is validated against the human red lines of ranked maps and supports tempo changes and multiple red lines; notes and lane patterns are learned from ranked 4K charts and star ratings are calibrated with osu!'s algorithm; every chart is checked for grid, attack and playability before it is written (method and results: [docs/mania4k_engine.md](docs/mania4k_engine.md)). Not done: SV effects, keysounds, deliberately designed mapper-style climaxes; live recordings with continuously drifting tempo fall back to one red line per beat. Look through the map in the editor before sharing it.
 
 ## How it works
 

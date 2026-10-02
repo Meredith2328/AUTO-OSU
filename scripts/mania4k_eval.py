@@ -69,6 +69,34 @@ def ranked_grid_agreement(heads: np.ndarray, reds) -> float:
     return ok / len(heads)
 
 
+def pattern_stats(notes) -> dict:
+    """Jack share (consecutive rows sharing a lane), p95 same-hand run (single-note rows), longest
+    anchor (same lane in a row of 1-note rows), left-hand share."""
+    rows = {}
+    for n in notes:
+        rows[n.time] = rows.get(n.time, 0) | (1 << n.lane)
+    masks = [rows[t] for t in sorted(rows)]
+    if len(masks) < 3:
+        return dict(jack=0.0, hand_run=0.0, anchor=0, left=0.5)
+    jack = float(np.mean([(a & b) != 0 for a, b in zip(masks, masks[1:])]))
+    runs, run, prev = [], 0, None
+    anchor, arun, alane = 0, 0, None
+    for m in masks:
+        if bin(m).count("1") == 1:
+            lane = m.bit_length() - 1
+            hand = lane // 2
+            run = run + 1 if hand == prev else 1
+            prev = hand
+            arun = arun + 1 if lane == alane else 1
+            alane = lane
+            anchor = max(anchor, arun)
+        else:
+            run, prev, arun, alane = 0, None, 0, None
+        runs.append(run)
+    left = sum(bin(m & 0b0011).count("1") for m in masks) / max(1, sum(bin(m).count("1") for m in masks))
+    return dict(jack=jack, hand_run=float(np.percentile(runs, 95)), anchor=anchor, left=left)
+
+
 def stats(notes) -> dict:
     heads = np.array(sorted({n.time for n in notes}))
     span = (heads[-1] - heads[0]) / 1000.0 if len(heads) > 1 else 1.0
@@ -145,13 +173,17 @@ def main() -> None:
             prec = matched(g["heads"], union) / max(1, len(g["heads"]))
             rec = matched(r["heads"], g["heads"]) / max(1, len(r["heads"]))
             agree = ranked_grid_agreement(g["heads"], [RedLine(*x) for x in c["reds"]])
+            pg, pr = pattern_stats(chart.notes), pattern_stats(ns)
             rows.append(dict(set=meta["set"], version=c["version"], stars=c["stars"], got=sr_got,
                              precision=prec, recall=rec, grid=agree, nps=g["nps"], nps_ref=r["nps"], chord=g["chord"],
                              chord_ref=r["chord"], ln=g["ln"], ln_ref=r["ln"], ok=check.ok,
+                             **{f"{k}": v for k, v in pg.items()}, **{f"{k}_ref": v for k, v in pr.items()},
                              problems=check.problems))
             print(f"{meta['set']:>8} {c['version'][:24]:<24} SR {c['stars']:4.2f}->{sr_got:4.2f} "
                   f"grid {agree:6.1%} prec {prec:5.1%} rec {rec:5.1%} nps {g['nps']:5.2f}/{r['nps']:5.2f} "
                   f"chord {g['chord']:4.2f}/{r['chord']:4.2f} ln {g['ln']:4.2f}/{r['ln']:4.2f} "
+                  f"jack {pg['jack']:4.2f}/{pr['jack']:4.2f} hand {pg['hand_run']:3.0f}/{pr['hand_run']:3.0f} "
+                  f"anchor {pg['anchor']:2d}/{pr['anchor']:2d} left {pg['left']:4.2f}/{pr['left']:4.2f} "
                   f"{'OK' if check.ok else ' '.join(check.problems)}", flush=True)
         print(f"   ({time.time() - t0:.0f}s) {meta['artist']} - {meta['title']}", flush=True)
     if not rows:
@@ -162,6 +194,8 @@ def main() -> None:
     print(f"charts {len(rows)}  sync precision mean {a('precision').mean():.1%} median {np.median(a('precision')):.1%}  "
           f"recall {a('recall').mean():.1%}  |SR err| {np.abs(a('got') - a('stars')).mean():.2f}  "
           f"verify ok {np.mean([r['ok'] for r in rows]):.1%}")
+    for k in ("nps", "chord", "ln", "jack", "hand_run", "anchor", "left"):
+        print(f"  {k:>8}: generated {np.mean(a(k)):.3f}  ranked {np.mean(a(k + '_ref')):.3f}")
     if args.out:
         Path(args.out).write_text(json.dumps(rows, indent=1), encoding="utf-8")
 
