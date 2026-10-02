@@ -35,6 +35,7 @@ def main() -> None:
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--baseline", action="store_true", help="evaluate autoosu.timing.estimate_timing")
     ap.add_argument("--out", default="")
+    ap.add_argument("--cached-only", action="store_true", help="skip songs without cached tracker output")
     args = ap.parse_args()
     rows = []
     dirs = [d for d in sorted(Path(args.corpus).iterdir()) if (d / "meta.json").exists()]
@@ -43,6 +44,8 @@ def main() -> None:
     for d in dirs:
         ref = reference(d)
         if ref is None:
+            continue
+        if args.cached_only and not args.baseline and not (Path(args.cache) / f"{d.name}.beat.npz").exists():
             continue
         meta = json.loads((d / "meta.json").read_text(encoding="utf-8"))
         t0 = time.time()

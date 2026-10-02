@@ -95,6 +95,19 @@ def dominant_period(beats: np.ndarray) -> float:
     return float(np.median(near)) if len(near) else float(0.5 * (e[k] + e[k + 1]))
 
 
+def offbeats_like_beats(o: np.ndarray, w: np.ndarray, period: float, phase: float, tol: float = 7.0) -> bool:
+    """True when strong attacks fall on the half beat about as often as on the beat: the music
+    pulses twice as fast as this BPM, and mappers write the doubled BPM."""
+    if len(o) < 16:
+        return False
+    x = (o - phase) / period
+    frac = x - np.floor(x)
+    on_beat = np.minimum(frac, 1 - frac) * period <= tol
+    on_half = np.abs(frac - 0.5) * period <= tol
+    beat_w, half_w = float(w[on_beat].sum()), float(w[on_half].sum())
+    return beat_w > 0 and half_w >= 0.9 * beat_w
+
+
 def fold_bpm_octave(period: float, lo_bpm: float = 100.0, hi_bpm: float = 250.0) -> float:
     """Ranked 4K convention: the main BPM lies between 100 and 250."""
     while 60000.0 / period < lo_bpm:
@@ -469,6 +482,8 @@ def estimate_timing(env: OnsetEnvelopes, beat_logit: np.ndarray, down_logit: np.
     ref = fold_bpm_octave(dominant_period(beats))
     period, phase, _ = search_period(o, w, ref * 0.97, ref * 1.03)
     glob = _finish(Segment(t0, t1, period, phase), o, w, act, down, meter)
+    if offbeats_like_beats(o[strong], w[strong], glob.period, glob.phase) and 120000.0 / glob.period <= 250.0:
+        glob = _finish(Segment(t0, t1, glob.period / 2.0, glob.phase), o, w, act, down, meter)
     glob.snap_rate = snap_rate(o[strong], w[strong], glob.period, glob.phase)
     segs, kind = [glob], "constant"
 
