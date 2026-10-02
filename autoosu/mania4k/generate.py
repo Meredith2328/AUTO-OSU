@@ -14,7 +14,6 @@ Guarantees enforced here (and re-checked by :func:`autoosu.mania4k.verify.verify
 from __future__ import annotations
 
 import bisect
-import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -22,8 +21,8 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import torch
 
-from .chart import KEYS, Chart, Note, RedLine
-from .features import DIV_CLASSES, POS_DIV, POSITIONS, Grid, SongFeatures, build_grid, env_matrix, local_loudness, mel_index, song_features
+from .chart import KEYS, Chart, Note
+from .features import DIV_CLASSES, POS_DIV, Grid, SongFeatures, build_grid, env_matrix, local_loudness, mel_index, song_features
 from .model import LN_BINS, NoteNet
 from .onsets import OnsetEnvelopes, attack_times, near_attack
 from .patterns import PatternNet, RowState, advance, allowed_masks, lanes_of, row_features
@@ -136,7 +135,8 @@ class Row:
     ln_beats: float
 
 
-def select_rows(an: SongAnalysis, probs: Dict[str, np.ndarray], rules: Rules, theta: float) -> List[Row]:
+def select_rows(an: SongAnalysis, probs: Dict[str, np.ndarray], rules: Rules, theta: float,
+                chord_boost: float = 1.0) -> List[Row]:
     g = an.grid
     p_note = 1.0 - probs["count"][:, 0]
     allowed_div = np.isin(np.array([DIV_CLASSES[d] for d in g.div]), rules.divisors)
@@ -164,7 +164,7 @@ def select_rows(an: SongAnalysis, probs: Dict[str, np.ndarray], rules: Rules, th
     for level, share_p in ((2, ge2), (3, ge3), (4, ge4)):
         if level > rules.max_chord:
             break
-        n = int(round(share_p.sum()))
+        n = min(len(chosen), int(round(share_p.sum() * chord_boost)))
         if n <= 0:
             continue
         top = np.argsort(-share_p, kind="stable")[:n]
@@ -287,26 +287,29 @@ def generate_chart(an: SongAnalysis, name: str, target_stars: Optional[float] = 
     nnet, pnet = models or load_models()
     probs = note_probabilities(an, nnet, target)
 
-    def build(theta: float) -> Tuple[Chart, float]:
-        rows = select_rows(an, probs, rules, theta)
+    def build(theta: float, boost: float) -> Tuple[Chart, float]:
+        rows = select_rows(an, probs, rules, theta, boost)
         notes = assign_lanes(an, rows, rules, pnet, target, np.random.default_rng(seed))
         chart = Chart(notes, list(an.timing.red_lines), rules.od, rules.hp, name)
         return chart, (star_rating(chart_to_osu_text(chart)) if notes else 0.0)
 
-    lo, hi = 0.02, 0.98                      # higher theta -> fewer notes -> lower stars
     best: Optional[Tuple[float, Chart, float]] = None
-    theta = 0.5
-    for _ in range(12):
-        chart, sr = build(theta)
-        if best is None or abs(sr - target) < abs(best[2] - target):
-            best = (theta, chart, sr)
-        if abs(sr - target) <= tolerance:
+    for boost in (1.0, 1.3, 1.6):           # more chords only when the song is too sparse otherwise
+        lo, hi = 0.02, 0.98                  # higher theta -> fewer notes -> lower stars
+        theta = 0.5
+        for _ in range(12):
+            chart, sr = build(theta, boost)
+            if best is None or abs(sr - target) < abs(best[2] - target):
+                best = (theta, chart, sr)
+            if abs(sr - target) <= tolerance:
+                break
+            if sr > target:
+                lo = theta
+            else:
+                hi = theta
+            theta = 0.5 * (lo + hi)
+        if abs(best[2] - target) <= tolerance or best[2] > target:
             break
-        if sr > target:
-            lo = theta
-        else:
-            hi = theta
-        theta = 0.5 * (lo + hi)
     theta, chart, sr = best
     holds = sum(n.is_hold for n in chart.notes)
     return chart, ChartReport(name, target, sr, theta, len({n.time for n in chart.notes}), len(chart.notes), holds)

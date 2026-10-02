@@ -4,8 +4,6 @@ The neural beat tracker is replaced by synthetic activations here, so the tests 
 """
 from __future__ import annotations
 
-import math
-
 import numpy as np
 import pytest
 import soundfile as sf

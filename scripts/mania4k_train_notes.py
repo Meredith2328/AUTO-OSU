@@ -18,7 +18,7 @@ import torch.nn.functional as F
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from autoosu.mania4k.features import MEL_HOP, PATCH                  # noqa: E402
+from autoosu.mania4k.features import MEL_HOP                         # noqa: E402
 from autoosu.mania4k.model import NoteNet, ln_class                  # noqa: E402
 from autoosu.mania4k.onsets import SR                                # noqa: E402
 
