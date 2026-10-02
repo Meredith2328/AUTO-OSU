@@ -36,11 +36,15 @@ def main() -> None:
     ap.add_argument("--baseline", action="store_true", help="evaluate autoosu.timing.estimate_timing")
     ap.add_argument("--out", default="")
     ap.add_argument("--cached-only", action="store_true", help="skip songs without cached tracker output")
+    ap.add_argument("--no-changes", action="store_true", help="force one constant tempo per song")
+    ap.add_argument("--shard", default="0/1", help="i/n: evaluate every n-th song starting at i")
     args = ap.parse_args()
     rows = []
     dirs = [d for d in sorted(Path(args.corpus).iterdir()) if (d / "meta.json").exists()]
     if args.limit:
         dirs = dirs[:args.limit]
+    si, sn = (int(x) for x in args.shard.split("/"))
+    dirs = dirs[si::sn]
     for d in dirs:
         ref = reference(d)
         if ref is None:
@@ -67,7 +71,8 @@ def main() -> None:
                 np.savez_compressed(cache, beat=beat.astype(np.float16), down=down.astype(np.float16))
             env = onset_envelopes(y, sr)
             try:
-                res = estimate_timing(env, beat, down, first_note_ms=ref.notes[0].time + args.shift)
+                res = estimate_timing(env, beat, down, first_note_ms=ref.notes[0].time + args.shift,
+                                      allow_changes=not args.no_changes)
                 reds, kind = res.red_lines, f"{res.kind[:5]} {res.snap_rate:.2f}"
             except ValueError as exc:
                 print(d.name, "FAILED", exc, flush=True)
