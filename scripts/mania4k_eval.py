@@ -59,7 +59,7 @@ def ranked_grid_agreement(heads: np.ndarray, reds) -> float:
                    for d in (1, 2, 4, 8, 3, 6))
         devs.append(best[1])
     devs = np.array(devs)
-    c = np.median(devs[np.abs(devs) < 8]) if (np.abs(devs) < 8).any() else 0.0
+    c = float(np.median(devs))
     shifted = [t - c for t in heads]
     ok = 0
     for t in shifted:
@@ -132,10 +132,13 @@ def main() -> None:
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--baseline", action="store_true")
     ap.add_argument("--out", default="")
+    ap.add_argument("--shard", default="0/1", help="i/n: evaluate every n-th test song starting at i")
     args = ap.parse_args()
+    si, sn = (int(x) for x in args.shard.split("/"))
     models = None if args.baseline else load_models()
     rows = []
     files = sorted(Path(args.prepared).glob("*.npz"))
+    files = [f for f in files if json.loads(bytes(np.load(f)["meta"]))["split"] == args.split][si::sn]
     done = 0
     for f in files:
         z = np.load(f)

@@ -172,8 +172,10 @@ def _generate_mania4k(audio_path, difficulties: List[str], out_dir, seed: int, t
     tm = an.timing
     bpm = main_bpm(tm.red_lines, an.duration_ms)
     report(0.3, "timing")
-    log(f"[3/4] timing: {tm.kind}, {len(tm.red_lines)} red line(s), main BPM {bpm:g}, "
-        f"{tm.snap_rate:.0%} of attacks on the grid (written {OSU_SHIFT_MS:g} ms early, osu! convention)")
+    changes = "" if len(tm.red_lines) == 1 else ", tempo changes at " + ", ".join(
+        f"{r.time / 1000:.1f}s ({r.bpm:g})" for r in tm.red_lines[1:6])
+    log(f"[3/4] timing: main BPM {bpm:g}, {len(tm.red_lines)} red line(s){changes} "
+        f"(written {OSU_SHIFT_MS:g} ms early, ranked osu! convention)")
     meta_title, meta_artist = read_metadata(audio_path)
     title, artist = title or meta_title, artist or meta_artist
     workdir = out_dir / ".work"
@@ -189,10 +191,16 @@ def _generate_mania4k(audio_path, difficulties: List[str], out_dir, seed: int, t
     log("[4/4] generating difficulties")
     models = load_models()
     diffs: List[DiffResult] = []
-    for i, name in enumerate(names):
+    prev_stars: Optional[float] = None
+    for i, name in enumerate(sorted(names, key=lambda n: DIFFICULTIES[n])):
         report(0.35 + 0.6 * i / len(names), f"{name}: notes")
         target = star_rating if (star_rating is not None and len(names) == 1) else DIFFICULTIES[name]
         chart, rep = generate_chart(an, name, target, seed=seed * 1000 + i, models=models)
+        if (prev_stars is not None and target - rep.stars > 0.5 and rep.stars - prev_stars < 0.4):
+            log(f"      {name:<7} skipped: the song only supports {rep.stars:.2f}* without overmapping "
+                f"(target {target:.2f}), too close to the previous difficulty")
+            continue
+        prev_stars = rep.stars
         chart.version = f"{name} 4K"
         check = verify_chart(chart, an.features.env, rules_for(target))
         if not check.ok:
@@ -206,6 +214,8 @@ def _generate_mania4k(audio_path, difficulties: List[str], out_dir, seed: int, t
         s = res.summary()
         log(f"      {name:<7} {rep.stars:4.2f}* (target {target:.2f})  {s['objects']:4d} notes "
             f"({s['circles']} taps, {s['holds']} holds) {s['nps']:.2f} notes/s  OD {chart.od:g} HP {chart.hp:g}  verified")
+    if not diffs:
+        raise RuntimeError("no difficulty could be generated for this song")
     report(0.97, "package")
     osz = write_osz([d.beatmap for d in diffs], audio_file, out_dir, extra_files=[background] if background else ())
     report(1.0, "done")

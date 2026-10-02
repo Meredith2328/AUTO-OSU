@@ -32,7 +32,7 @@ WEIGHTS = Path(__file__).resolve().parent / "weights"
 
 # Ranked charts are timed this much earlier than the attack in the decoded audio (median over the
 # ranked corpus, measured with the same onset envelope the timing engine locks onto).
-OSU_SHIFT_MS = 23.0
+OSU_SHIFT_MS = 24.0
 
 DIFFICULTIES: Dict[str, float] = {"Easy": 1.6, "Normal": 2.35, "Hard": 3.2, "Insane": 4.3, "Expert": 5.4}
 
@@ -46,19 +46,20 @@ class Rules:
     divisors: Tuple[int, ...]
     od: float
     hp: float
-    max_ln_share: float
+    max_ln_share: float          # long notes on at most this share of rows (most sustained sounds)
+    max_chord_share: float       # ranked 75th percentile of chord rows for the star range
 
 
 def rules_for(stars: float) -> Rules:
     if stars < 1.9:
-        return Rules(300, 150, 2, (1, 2), 6.5, 6.5, 0.25)
+        return Rules(300, 150, 2, (1, 2), 6.5, 6.5, 0.12, 0.27)
     if stars < 2.7:
-        return Rules(170, 90, 2, (1, 2, 4, 3), 7.0, 7.0, 0.25)
+        return Rules(170, 90, 2, (1, 2, 4, 3), 7.0, 7.0, 0.12, 0.44)
     if stars < 3.6:
-        return Rules(130, 62, 3, (1, 2, 4, 3, 6), 7.5, 7.5, 0.25)
+        return Rules(130, 62, 3, (1, 2, 4, 3, 6), 7.5, 7.5, 0.12, 0.51)
     if stars < 4.6:
-        return Rules(100, 45, 3, (1, 2, 4, 8, 3, 6), 8.0, 8.0, 0.25)
-    return Rules(85, 34, 4, (1, 2, 4, 8, 3, 6), 8.0, 8.0, 0.25)
+        return Rules(100, 45, 3, (1, 2, 4, 8, 3, 6), 8.0, 8.0, 0.12, 0.51)
+    return Rules(85, 34, 4, (1, 2, 4, 8, 3, 6), 8.0, 8.0, 0.12, 0.47)
 
 
 @dataclass
@@ -139,7 +140,9 @@ def select_rows(an: SongAnalysis, probs: Dict[str, np.ndarray], rules: Rules, th
                 chord_boost: float = 1.0) -> List[Row]:
     g = an.grid
     p_note = 1.0 - probs["count"][:, 0]
-    allowed_div = np.isin(np.array([DIV_CLASSES[d] for d in g.div]), rules.divisors)
+    divs = np.array([DIV_CLASSES[d] for d in g.div])
+    # 1/8 only where it is a playable rhythm rather than a flam (>= 55 ms apart)
+    allowed_div = np.isin(divs, rules.divisors) & ((divs != 8) | (g.beat_ms / 8.0 >= 55.0))
     cand = np.where((p_note >= theta) & an.support & allowed_div)[0]
     order = cand[np.argsort(-p_note[cand], kind="stable")]
     taken: List[float] = []
@@ -153,7 +156,7 @@ def select_rows(an: SongAnalysis, probs: Dict[str, np.ndarray], rules: Rules, th
             continue
         taken.insert(j, t)
         chosen.append(int(i))
-    chosen.sort()
+    chosen = consistent_snaps(g, sorted(chosen), p_note)
     if not chosen:
         return []
     pc = probs["count"][chosen]
@@ -164,14 +167,14 @@ def select_rows(an: SongAnalysis, probs: Dict[str, np.ndarray], rules: Rules, th
     for level, share_p in ((2, ge2), (3, ge3), (4, ge4)):
         if level > rules.max_chord:
             break
-        n = min(len(chosen), int(round(share_p.sum() * chord_boost)))
+        n = min(int(round(share_p.sum() * chord_boost)), int(round(rules.max_chord_share * len(chosen))))
         if n <= 0:
             continue
         top = np.argsort(-share_p, kind="stable")[:n]
         k[top[k[top] >= level - 1]] = level
-    # long notes where the model is confident (sustained sounds), at most the difficulty's share
+    # long notes on the rows the model finds most sustained, at most the difficulty's share
     p_ln = probs["ln"][chosen]
-    confident = np.where(p_ln >= 0.5)[0]
+    confident = np.where(p_ln >= 0.25)[0]
     n_ln = min(len(confident), int(rules.max_ln_share * len(chosen)))
     ln_rows = set(confident[np.argsort(-p_ln[confident], kind="stable")[:n_ln]].tolist())
     rows = []
@@ -179,6 +182,35 @@ def select_rows(an: SongAnalysis, probs: Dict[str, np.ndarray], rules: Rules, th
         beats = LN_BINS[int(np.argmax(probs["lnlen"][i]))]
         rows.append(Row(i, float(g.times[i]), int(k[r]), r in ln_rows, beats))
     return rows
+
+
+def consistent_snaps(g: Grid, chosen: List[int], p_note: np.ndarray) -> List[int]:
+    """Mappers do not mix straight and triplet rhythms inside a beat, nor drop a lone triplet into
+    straight music: keep one family per beat (the one the model supports more) and only keep
+    triplet beats that belong to a triplet passage (another triplet beat within two beats)."""
+    if not chosen:
+        return chosen
+    fam = {}                                         # beat -> {"s": [...], "t": [...]}
+    for i in chosen:
+        d = POS_DIV[g.pos[i]]
+        b = int(np.floor(g.beat[i] + 1e-6))
+        kind = "t" if d in (3, 6) else ("s" if d != 1 else "b")
+        fam.setdefault(b, {"s": [], "t": [], "b": []})[kind].append(i)
+    triplet_beats = set()
+    keep: List[int] = []
+    for b, f in fam.items():
+        if f["t"] and f["s"]:
+            if p_note[f["t"]].sum() > p_note[f["s"]].sum():
+                f["s"] = []
+            else:
+                f["t"] = []
+        if f["t"]:
+            triplet_beats.add(b)
+    for b, f in fam.items():
+        keep += f["b"] + f["s"]
+        if f["t"] and any(nb in triplet_beats for nb in (b - 2, b - 1, b + 1, b + 2)):
+            keep += f["t"]
+    return sorted(keep)
 
 
 # --------------------------------------------------------------------------- patterns
