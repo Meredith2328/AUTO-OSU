@@ -38,14 +38,17 @@ What the corpus says (medians per star band) and what the engine adopts:
 3. Tempo changes: 12-beat windows whose onsets fit a *local* grid much better than the global one, and
    stretches where the tracker's local tempo departs by > 2 %, become candidate regions. Their edges are
    moved beat by beat to where onsets switch grids, then refitted; a region keeps its own red line only
-   if its tempo or phase really differs, it is not a simple metrical ratio (1/2, 2/3, 3/4 ...) of the
-   global tempo, and the snap rate improves by ≥ 0.10. Songs no constant grid explains get a red line
-   per beat, locked to onsets.
+   if its tempo differs (snap rate + 0.10) or, much more strictly, only its phase (+ 0.20, ≥ 16 beats),
+   and it is not a simple metrical ratio (1/2, 2/3, 3/4 ...) of the global tempo. Pieces that snap back
+   onto the global grid are merged into it.
 4. BPMs snap to the simplest value (integer first) whose drift over the segment stays within 2 ms
    (6 ms for integers); red lines sit on downbeats from the tracker's downbeat activation.
 5. **Offset convention.** Ranked charts are timed before the attack in decoded audio; measured per
-   chart over the corpus the offset is 24.5 ms (IQR 22.5–27.5, same for mp3 and ogg). Charts are
-   written `OSU_SHIFT_MS` early so players' offsets calibrated on ranked maps apply unchanged.
+   chart over the corpus the offset is 24.5 ms (IQR 22.5–27.5, same for mp3 and ogg), and 24.4 ms from
+   the timing audit. Charts are written `OSU_SHIFT_MS` = 24 ms early so players' offsets calibrated on
+   ranked maps apply unchanged.
+6. **Octave.** When strong attacks fall on the off-beat as often as on the beat, mappers write the
+   doubled BPM (if ≤ 250), and so does the engine.
 
 ## Notes (`model.py`, `features.py`)
 
@@ -55,11 +58,14 @@ Candidate ticks are the 1/8 ∪ 1/6 positions (12 per beat) of the red lines. A 
 chord size 0–4, long-note head, long-note length class. It is trained on the ranked charts' own grids,
 with each chart aligned to the audio by its measured offset.
 
-Selection (`generate.py`): ticks above a threshold θ, **only where the onset envelope peaks within
-±10 ms** (any band), only on the difficulty's snaps, with non-maximum suppression at the difficulty's
-minimum row gap. Chords and long notes are given to the rows the model ranks most chord-/LN-like, in the
-proportion the model expects. θ is bisected until rosu-pp (osu!'s star rating algorithm) gives the
-target star rating ± 0.08.
+Selection (`generate.py`): ticks above a threshold θ, **only where a distinct attack (a prominent
+onset peak in any band) lies within ±8 ms** (stricter than human mappers: ~14 % of ranked notes have
+no such peak), only on the difficulty's snaps (1/8 only when ≥ 55 ms apart), with non-maximum
+suppression at the difficulty's minimum row gap. One rhythm family per beat (straight or triplet), and
+triplets only inside triplet passages. Chords go to the rows the model ranks most chord-like, in the
+proportion the model expects but at most the ranked 75th percentile for the star range; long notes to
+the most sustained rows (up to 12 %). θ is bisected until rosu-pp (osu!'s star rating algorithm) gives
+the target star rating ± 0.08; if the song is too sparse, the chord share is raised in steps.
 
 ## Lane patterns (`patterns.py`)
 
@@ -81,4 +87,65 @@ the earlier generator with `--baseline`). Results: see below.
 
 ## Results
 
-(filled in from the evaluation runs)
+All numbers are on songs the models never saw (test split, 22 songs / 67 ranked charts), or for timing
+on every corpus song whose tracker output was cached (218 songs, 154 with one red line in the ranked
+map, 64 with several).
+
+### Timing against human red lines
+
+A ranked note counts as *consistent* when it lies within 5 ms of our grid at the musically equivalent
+snap (octave-aware), after removing the song's constant offset; a song passes at ≥ 98 %.
+
+| | constant-tempo songs (154) | songs whose ranked map has several red lines (64) | all (218) |
+| --- | --- | --- | --- |
+| previous estimator (`autoosu.timing`, one red line) | 77.9 % (mean consistency 89.5 %) | 34.4 % (mean 60.9 %) | 65.1 % (mean 81.1 %) |
+| this engine without tempo-change detection | 94.2 % (mean 97.4 %) | 46.9 % (mean 78.1 %) | 80.3 % (mean 91.7 %) |
+| **this engine** | **93.5 % (mean 97.3 %)** | **46.9 % (mean 81.6 %)** | **79.8 % (mean 92.7 %)** |
+
+Main BPM identical to the mapper's: 73.9 % before, 80.7 % now (the rest are mostly octave choices,
+which do not affect sync).
+
+Median offset of our grid against ranked notes: +3.6 ms with a 28 ms convention, i.e. ranked charts
+are 24.4 ms ahead of the decoded attack, matching the per-chart estimate (24.5 ms); `OSU_SHIFT_MS = 24`.
+
+Remaining failures: live recordings whose tempo drifts continuously (ranked maps use dozens to
+hundreds of red lines), tournament tracks with many tempo changes, swung hip-hop/jazz, ternary
+(12/8) songs mapped at a third of our BPM. In the 4-beat-phase cases the 1/4 grid points are right
+but the beat labelling is a quarter off.
+
+### Generated charts against the ranked charts of the same songs
+
+One chart generated per ranked chart, at that chart's star rating.
+
+| | previous rules engine | **this engine** | ranked charts |
+| --- | --- | --- | --- |
+| generated notes on the ranked chart's own grid (±5 ms) | 95.8 % (81 % of charts 100 %) | **98.4 % (82 % of charts 100 %)** | |
+| charts passing `verify_chart` | 61 % | **100 %** | |
+| \|star rating − target\| | 1.44 ★ (1.5 % within ±0.2) | **0.21 ★ (76 % within ±0.2)** | |
+| recall of ranked note heads (±12 ms) | 39.5 % | **73.7 %** | |
+| precision against all ranked heads of the song | 84.6 % | 84.4 % (at 2.5× the notes) | |
+| notes / s | 3.5 | **8.6** | 9.2 |
+| chord rows | 9.9 % | **35.1 %** | 35.6 % |
+| long notes | 6.0 % | 9.7 % | 21.3 % |
+| consecutive rows sharing a lane (jacks) | 10.0 % | 11.6 % | 17.8 % |
+| same-hand run (p95) / longest anchor | 1.0 / 1.0 (strict alternation) | **2.0 / 3.2** | 2.0 / 3.3 |
+| left-hand share | 0.50 | 0.49 | 0.50 |
+
+When a song cannot reach a difficulty's star target without overmapping (the ranked charts of the
+song stop lower too), the engine falls short instead of padding notes, and skips a difficulty that would
+land within 0.4 ★ of the previous one.
+
+Note model on held-out charts (tick level, given the chart's star rating): precision 0.867,
+recall 0.826, F1 0.846. Pattern model: 56 % top-1 lane-combination accuracy (chance 25 % for single notes).
+
+### Reproduce
+
+```bash
+python scripts/mania4k_fetch.py --out ~/data/mania4k --sets 300
+python scripts/mania4k_prepare.py --corpus ~/data/mania4k --out ~/data/prepared
+python scripts/mania4k_train_notes.py --data ~/data/prepared --out notes.pt --epochs 20      # best epoch kept
+python scripts/mania4k_train_patterns.py --data ~/data/prepared --out patterns.pt
+python scripts/mania4k_eval_timing.py --corpus ~/data/mania4k [--baseline]
+python scripts/mania4k_eval.py --prepared ~/data/prepared --corpus ~/data/mania4k [--baseline]
+python scripts/mania4k_preview.py chart.osu -o chart.png --start 30 --seconds 20
+```
