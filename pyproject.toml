@@ -18,6 +18,8 @@ dependencies = [
     "soundfile>=0.12",
     "mutagen",
     "torch>=2.1",
+    "beat-this>=1.1",        # mania4k: neural beat/downbeat tracker (its network; no torchaudio needed)
+    "rosu-pp-py>=3",         # mania4k: osu! star rating, to calibrate difficulties
 ]
 
 [project.optional-dependencies]
@@ -42,6 +44,7 @@ include = ["autoosu*"]
 [tool.setuptools.package-data]
 "autoosu" = ["assets/*.png", "assets/*.ico", "assets/*.json", "assets/fonts/*"]
 "autoosu.ml.coord" = ["LICENSE"]
+"autoosu.mania4k" = ["weights/*.pt"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

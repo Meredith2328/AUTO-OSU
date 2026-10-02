@@ -10,13 +10,16 @@ from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_sub
 
 block_cipher = None
 datas, binaries, hiddenimports = [], [], []
-for pkg in ("customtkinter", "tkinterdnd2", "librosa", "imageio_ffmpeg", "soundfile"):
+for pkg in ("customtkinter", "tkinterdnd2", "librosa", "imageio_ffmpeg", "soundfile", "rosu_pp_py"):
     d, b, h = collect_all(pkg)
     datas += d
     binaries += b
     hiddenimports += h
 hiddenimports += collect_submodules("autoosu")
-datas += [("autoosu/assets", "autoosu/assets")]
+# mania4k beat tracker: only the network modules of beat_this (its torchaudio front end is not used)
+hiddenimports += ["beat_this.model.beat_tracker", "beat_this.model.roformer", "beat_this.utils",
+                  "einops", "einops.layers.torch", "rotary_embedding_torch"]
+datas += [("autoosu/assets", "autoosu/assets"), ("autoosu/mania4k/weights", "autoosu/mania4k/weights")]
 runtime_bundle = write_bundle(Path(os.getcwd()), Path(os.getcwd()) / "build/runtime-source.zip")
 datas += [(str(runtime_bundle), "runtime")]
 hiddenimports += ["scipy.special._cdflib", "scipy._lib.array_api_compat.numpy.fft", "sklearn.utils._typedefs"]

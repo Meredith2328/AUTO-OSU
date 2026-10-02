@@ -139,7 +139,7 @@ def test_generate_mania_osz_through_real_pipeline(tmp_path):
 
     wav = make_song(tmp_path / "Test Artist - Mania Song.wav", bpm=128, bars=6)
     result = generate(wav, ["Easy", "Hard"], tmp_path / "out", seed=13,
-                      bpm=128, offset_ms=500, mode="mania4k", log=lambda *_: None)
+                      bpm=128, offset_ms=500, mode="mania4k", mania_engine="rules", log=lambda *_: None)
     assert result.device == "cpu"
     assert result.osz.name.endswith(" [mania 4K].osz")
     with zipfile.ZipFile(result.osz) as archive:

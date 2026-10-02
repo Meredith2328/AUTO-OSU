@@ -50,7 +50,7 @@ class GenerateResult:
     osz: Path
     audio_file: Path
     timing: Timing
-    analysis: AudioAnalysis
+    analysis: Optional[AudioAnalysis]          # None for the mania4k ranked engine
     diffs: List[DiffResult] = field(default_factory=list)
     elapsed_s: float = 0.0
     osu_shift_ms: int = OSU_TIMING_SHIFT_MS
@@ -142,6 +142,79 @@ def cached_model(cache: Dict, kind: str, path: str, device: str, loader):
     return cache[key]
 
 
+def _generate_mania4k(audio_path, difficulties: List[str], out_dir, seed: int, title: Optional[str],
+                      artist: Optional[str], creator: str, log, progress: Optional[ProgressFn],
+                      star_rating: Optional[float], bpm: Optional[float] = None,
+                      offset_ms: Optional[float] = None) -> GenerateResult:
+    """osu!mania 4K with the ranked-calibrated engine (autoosu.mania4k)."""
+    from .mania4k.generate import (DIFFICULTIES, OSU_SHIFT_MS, analyse_song, build_beatmap as build_4k,
+                                   generate_chart, load_models, rules_for)
+    from .mania4k.chart import main_bpm
+    from .mania4k.verify import verify_chart
+
+    t0 = _time.perf_counter()
+    audio_path, out_dir = Path(audio_path), Path(out_dir)
+    for d in difficulties:
+        if d not in DIFFICULTIES and get_preset(d).name not in DIFFICULTIES:
+            raise ValueError(f"unknown difficulty {d!r}")
+    names = [d if d in DIFFICULTIES else get_preset(d).name for d in difficulties]
+    if not names:
+        raise ValueError("Choose at least one difficulty")
+    report = progress or (lambda f, m: None)
+    report(0.0, "load")
+    log(f"[1/4] loading {audio_path.name}")
+    y, sr = load_audio(audio_path)
+    report(0.05, "analyse")
+    log(f"[2/4] analysing audio ({len(y) / sr:.1f} s): beat tracker, onsets")
+    # a user offset is given in osu! time; the engine works in audio time
+    an = analyse_song(audio_path, y, sr, bpm=bpm,
+                      offset_ms=None if offset_ms is None else offset_ms + OSU_SHIFT_MS)
+    tm = an.timing
+    bpm = main_bpm(tm.red_lines, an.duration_ms)
+    report(0.3, "timing")
+    log(f"[3/4] timing: {tm.kind}, {len(tm.red_lines)} red line(s), main BPM {bpm:g}, "
+        f"{tm.snap_rate:.0%} of attacks on the grid (written {OSU_SHIFT_MS:g} ms early, osu! convention)")
+    meta_title, meta_artist = read_metadata(audio_path)
+    title, artist = title or meta_title, artist or meta_artist
+    workdir = out_dir / ".work"
+    audio_file = prepare_audio(audio_path, workdir)
+    background = None
+    cover = extract_cover(audio_path)
+    if cover:
+        background = prepare_background(cover[0], cover[1], workdir)
+    elif audio_path.suffix.lower() in VIDEO_EXTS:
+        from .audio_io import extract_video_frame
+
+        background = extract_video_frame(audio_path, workdir / "bg.jpg")
+    log("[4/4] generating difficulties")
+    models = load_models()
+    diffs: List[DiffResult] = []
+    for i, name in enumerate(names):
+        report(0.35 + 0.6 * i / len(names), f"{name}: notes")
+        target = star_rating if (star_rating is not None and len(names) == 1) else DIFFICULTIES[name]
+        chart, rep = generate_chart(an, name, target, seed=seed * 1000 + i, models=models)
+        chart.version = f"{name} 4K"
+        check = verify_chart(chart, an.features.env, rules_for(target))
+        if not check.ok:
+            raise RuntimeError(f"{name}: generated chart failed verification ({', '.join(check.problems)})")
+        bm = build_4k(an, chart, audio_file.name, title, artist, creator, OSU_SHIFT_MS,
+                      background.name if background else "", stars=rep.stars)
+        preset = dataclasses.replace(get_preset(name) if name != "Expert" else get_preset("Insane"), name=name,
+                                     od=chart.od, hp=chart.hp, cs=4, star=rep.stars)
+        res = DiffResult(preset, [], bm)
+        diffs.append(res)
+        s = res.summary()
+        log(f"      {name:<7} {rep.stars:4.2f}* (target {target:.2f})  {s['objects']:4d} notes "
+            f"({s['circles']} taps, {s['holds']} holds) {s['nps']:.2f} notes/s  OD {chart.od:g} HP {chart.hp:g}  verified")
+    report(0.97, "package")
+    osz = write_osz([d.beatmap for d in diffs], audio_file, out_dir, extra_files=[background] if background else ())
+    report(1.0, "done")
+    first = tm.red_lines[0]
+    return GenerateResult(osz=osz, audio_file=audio_file, timing=Timing(bpm, first.time), analysis=None,
+                          diffs=diffs, elapsed_s=_time.perf_counter() - t0, osu_shift_ms=int(round(OSU_SHIFT_MS)),
+                          device="cpu")
+
+
 def generate(audio_path: str | Path, difficulties: List[str], out_dir: str | Path = "out",
              seed: int = 0, bpm: Optional[float] = None, offset_ms: Optional[float] = None,
              title: Optional[str] = None, artist: Optional[str] = None,
@@ -153,10 +226,14 @@ def generate(audio_path: str | Path, difficulties: List[str], out_dir: str | Pat
              model_cache: Optional[Dict] = None, mode: str = "standard",
              mania_model: Optional[str] = None, mania_device: str = "auto",
              mania_target_nps: Optional[float] = None,
-             mania_threshold: Optional[float] = None) -> GenerateResult:
+             mania_threshold: Optional[float] = None,
+             mania_engine: str = "ranked") -> GenerateResult:
     """Analyse a song and write one .osz with the requested difficulties.
 
     rhythm_model / coord_model: paths to the trained models; without them the rule-based layers run.
+    mania_engine (mode mania4k): "ranked" (default) is the ranked-calibrated engine in autoosu.mania4k
+    (exact multi-red-line timing, note and pattern models learned from ranked 4K charts, star-rating
+    calibration); "rules" is the earlier rule-based generator. --mania-model always uses its checkpoint.
     progress(fraction, message) is called as work advances (for GUIs); log(text) gets the human summary.
     """
     if mode not in ("standard", "mania4k"):
@@ -165,6 +242,11 @@ def generate(audio_path: str | Path, difficulties: List[str], out_dir: str | Pat
         raise ValueError("standard rhythm/coordinate checkpoints cannot generate mania 4K")
     if mode != "mania4k" and mania_model:
         raise ValueError("--mania-model requires --mode mania4k")
+    if mania_engine not in ("ranked", "rules"):
+        raise ValueError(f"Unknown mania engine {mania_engine!r}; choose ranked or rules")
+    if mode == "mania4k" and not mania_model and mania_engine == "ranked":
+        return _generate_mania4k(audio_path, difficulties, out_dir, seed, title, artist, creator, log,
+                                 progress, star_rating, bpm, offset_ms)
     t0 = _time.perf_counter()
     audio_path, out_dir = Path(audio_path), Path(out_dir)
     presets = [get_preset(d) for d in difficulties]
