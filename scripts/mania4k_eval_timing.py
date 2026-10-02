@@ -49,7 +49,7 @@ def main() -> None:
         ref = reference(d)
         if ref is None:
             continue
-        if args.cached_only and not args.baseline and not (Path(args.cache) / f"{d.name}.beat.npz").exists():
+        if args.cached_only and not (Path(args.cache) / f"{d.name}.beat.npz").exists():
             continue
         meta = json.loads((d / "meta.json").read_text(encoding="utf-8"))
         t0 = time.time()
