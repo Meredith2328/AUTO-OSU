@@ -41,8 +41,9 @@ What the corpus says (medians per star band) and what the engine adopts:
    if its tempo differs (snap rate + 0.10) or, much more strictly, only its phase (+ 0.20, ≥ 16 beats),
    and it is not a simple metrical ratio (1/2, 2/3, 3/4 ...) of the global tempo. Pieces that snap back
    onto the global grid are merged into it.
-4. BPMs snap to the simplest value (integer first) whose drift over the segment stays within 2 ms
-   (6 ms for integers); red lines sit on downbeats from the tracker's downbeat activation.
+4. BPMs snap to the simplest value (integer first) whose accumulated drift over half the segment
+   stays within 2 ms for every rounding quantum; accepted phase changes are retained. Red lines sit
+   on downbeats from the tracker's downbeat activation.
 5. **Offset convention.** Ranked charts are timed before the attack in decoded audio; measured per
    chart over the corpus the offset is 24.5 ms (IQR 22.5–27.5, same for mp3 and ogg), and 24.4 ms from
    the timing audit. Charts are written `OSU_SHIFT_MS` = 24 ms early so players' offsets calibrated on
@@ -61,11 +62,12 @@ with each chart aligned to the audio by its measured offset.
 Selection (`generate.py`): ticks above a threshold θ, **only where a distinct attack (a prominent
 onset peak in any band) lies within ±8 ms** (stricter than human mappers: ~14 % of ranked notes have
 no such peak), only on the difficulty's snaps (1/8 only when ≥ 55 ms apart), with non-maximum
-suppression at the difficulty's minimum row gap. One rhythm family per beat (straight or triplet), and
-triplets only inside triplet passages. Chords go to the rows the model ranks most chord-like, in the
-proportion the model expects but at most the ranked 75th percentile for the star range; long notes to
-the most sustained rows (up to 12 %). θ is bisected until rosu-pp (osu!'s star rating algorithm) gives
-the target star rating ± 0.08; if the song is too sparse, the chord share is raised in steps.
+suppression at the difficulty's minimum row gap. Supported straight and triplet rows are retained
+when the threshold decreases. Chords go to the rows the model ranks most chord-like, in the proportion
+the model expects but at most the ranked 75th percentile for the star range; long notes go to the most
+sustained rows (up to 12 %). Calibration uses up to 12 bisection probes plus 4 broad probes per chord
+boost when needed (at most 48 charts scored overall). It returns the closest achieved rosu-pp star
+rating; ±0.08 is a target, not a guarantee, and an overshoot does not skip the later boosts.
 
 ## Lane patterns (`patterns.py`)
 
@@ -86,6 +88,9 @@ attack, no overlaps, no too-fast jacks, chord size, row spacing, nothing before 
 the earlier generator with `--baseline`). Results: see below.
 
 ## Results
+
+The following author-reported results were published at source `0707c310`, before the
+[synthetic regression fixes](mania4k_regression_review.md). They have not been rerun for these fixes.
 
 All numbers are on songs the models never saw (test split, 22 songs / 67 ranked charts), or for timing
 on every corpus song whose tracker output was cached (218 songs, 154 with one red line in the ranked

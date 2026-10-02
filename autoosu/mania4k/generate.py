@@ -9,7 +9,7 @@ Guarantees enforced here (and re-checked by :func:`autoosu.mania4k.verify.verify
   tick) - stricter than human mappers, ~14 % of whose notes have no such peak;
 * lanes never overlap, same-lane repeats respect the difficulty's minimum interval, chord sizes
   and snap divisors respect the difficulty;
-* the chart's star rating (computed with rosu-pp, the same algorithm as osu!) lands on the target.
+* bounded calibration reports the closest scored star rating; the target may be missed.
 """
 from __future__ import annotations
 
@@ -156,7 +156,7 @@ def select_rows(an: SongAnalysis, probs: Dict[str, np.ndarray], rules: Rules, th
             continue
         taken.insert(j, t)
         chosen.append(int(i))
-    chosen = consistent_snaps(g, sorted(chosen), p_note)
+    chosen.sort()  # Preserve supported rows as the threshold decreases.
     if not chosen:
         return []
     pc = probs["count"][chosen]
@@ -340,7 +340,16 @@ def generate_chart(an: SongAnalysis, name: str, target_stars: Optional[float] = 
             else:
                 hi = theta
             theta = 0.5 * (lo + hi)
-        if abs(best[2] - target) <= tolerance or best[2] > target:
+        if abs(best[2] - target) > tolerance:
+            # Retain all twelve refinement probes, then cover both sides. Stars
+            # need not be monotonic in theta after chords, lanes and LN decoding.
+            for probe in (0.02, 0.26, 0.74, 0.98):
+                chart, sr = build(probe, boost)
+                if abs(sr - target) < abs(best[2] - target):
+                    best = (probe, chart, sr)
+                if abs(sr - target) <= tolerance:
+                    break
+        if abs(best[2] - target) <= tolerance:
             break
     theta, chart, sr = best
     holds = sum(n.is_hold for n in chart.notes)
