@@ -11,7 +11,7 @@ attacks land on the 1/4 grid. The pipeline:
    that the onset peaks of a 2.9 ms flux envelope snap to the 1/4 grid of the whole song.
 3. A windowed scan finds stretches whose onsets fall off that grid. Each stretch is refitted on
    its own; if a different tempo explains it clearly better, the song gets a tempo change there.
-   Songs that no constant grid explains (live, rubato) get a red line per beat, locked to onsets.
+   (Live recordings whose tempo drifts continuously are out of scope: they keep the best constant grid.)
 4. BPMs are snapped to the simplest value (integer, .5, .25 ...) whose drift over the segment
    stays below 2 ms, and every red line sits on a downbeat.
 
@@ -20,7 +20,7 @@ The engine is audited against human red lines of ranked maps by ``scripts/mania4
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -40,8 +40,6 @@ class Segment:
     phase: float              # time of one beat (ms)
     snap_rate: float = 0.0    # share of strong onsets on the 1/4|1/3 grid
     downbeat: Optional[float] = None
-    per_beat: bool = False    # rubato fallback: one red line per tracker beat
-    beats: List[float] = field(default_factory=list)
 
     @property
     def bpm(self) -> float:
@@ -53,7 +51,7 @@ class TimingResult:
     red_lines: List[RedLine]
     segments: List[Segment]
     snap_rate: float          # share of strong onsets on the final grid
-    kind: str                 # constant | changes | per_beat
+    kind: str                 # constant | changes | forced
 
 
 # --------------------------------------------------------------------------- tracker
@@ -184,7 +182,7 @@ def snap_bpm(period: float, n_beats: int, tol_ms: float = 2.0) -> float:
     bpm = 60000.0 / period
     for q in (1.0, 0.5, 0.25, 0.2, 0.1, 0.05, 0.01):
         cand = round(bpm / q) * q
-        budget = 3.0 * tol_ms if q == 1.0 else tol_ms      # DAW-made songs have integer BPMs
+        budget = 5.0 * tol_ms if q == 1.0 else tol_ms      # DAW-made songs have integer BPMs
         if abs(60000.0 / cand - period) * max(1, n_beats) / 2.0 <= budget:
             return cand
     return round(bpm, 3)
@@ -349,10 +347,13 @@ def find_segments(o: np.ndarray, w: np.ndarray, beats: np.ndarray, glob: Segment
         if any(abs(ratio / q - 1) < 0.012 for q in (0.5, 2 / 3, 0.75, 4 / 3, 1.5, 2.0)):
             continue                            # same music read at another metrical level
         dphase = (ph - glob.phase) / (glob.period / 4)
-        differs = (abs(p - glob.period) / glob.period > 0.004 or
-                   abs(dphase - round(dphase)) * glob.period / 4 > 8.0)
-        if differs and r >= r_glob + 0.1:
+        tempo_differs = abs(p - glob.period) / glob.period > 0.004
+        phase_differs = abs(dphase - round(dphase)) * glob.period / 4 > 8.0
+        if tempo_differs and r >= r_glob + 0.1:
             segs[-1] = Segment(a2, b2, p, ph, r)
+        elif phase_differs and not tempo_differs and r >= r_glob + 0.2 \
+                and b2 - a2 >= 16 * glob.period and m2.sum() >= 30:
+            segs[-1] = Segment(a2, b2, p, ph, r)      # e.g. an inserted half measure: rare, needs strong evidence
     segs = _fill_gaps(segs, glob)
     return _merge(o, w, segs)
 
@@ -423,31 +424,6 @@ def _merge(o: np.ndarray, w: np.ndarray, segs: List[Segment]) -> List[Segment]:
     return out
 
 
-# --------------------------------------------------------------------------- rubato fallback
-
-def per_beat_segments(o: np.ndarray, w: np.ndarray, beats: np.ndarray, ref: float) -> List[Segment]:
-    """One red line per beat: tracker beats (at the dominant level) pulled onto nearby onsets."""
-    b = [beats[0]]
-    for t in beats[1:]:
-        if t - b[-1] >= 0.7 * ref:
-            b.append(t)
-    b = np.array(b)
-    locked = []
-    for t in b:
-        m = np.abs(o - t) <= 25.0
-        if m.any():
-            j = np.argmax(w[m] - np.abs(o[m] - t) / 100.0)
-            locked.append(float(o[m][j]))
-        else:
-            locked.append(float(t))
-    locked = np.array(locked)
-    segs = []
-    for i in range(len(locked) - 1):
-        p = locked[i + 1] - locked[i]
-        segs.append(Segment(locked[i], locked[i + 1], p, locked[i], per_beat=True))
-    return segs
-
-
 # --------------------------------------------------------------------------- main entry
 
 def estimate_timing(env: OnsetEnvelopes, beat_logit: np.ndarray, down_logit: np.ndarray,
@@ -492,18 +468,15 @@ def estimate_timing(env: OnsetEnvelopes, beat_logit: np.ndarray, down_logit: np.
         if len(split) > 1:
             split = [_copy_global(s, glob) if _is_global(s, glob) else _finish(s, o, w, act, down, meter)
                      for s in split]
+            # a piece that snapped back onto the global tempo and (nearly) its phase is the global grid
+            split = [_copy_global(s, glob) if _near_global(s, glob) else s for s in split]
             split = _merge_exact(split)
             tot = _total_rate(o[strong], w[strong], split)
             if len(split) > 1 and tot >= glob.snap_rate + 0.02:
                 segs, kind = split, "changes"
-        if glob.snap_rate < 0.45 and max(glob.snap_rate, _total_rate(o[strong], w[strong], segs)) < 0.5:
-            pb = per_beat_segments(o, w, beats, ref)
-            if pb and _total_rate(o[strong], w[strong], pb) >= glob.snap_rate + 0.1:
-                segs, kind = pb, "per_beat"
     for s in segs:
-        if not s.per_beat:
-            m = (o >= s.start_ms) & (o < s.end_ms) & strong
-            s.snap_rate = snap_rate(o[m], w[m], s.period, s.phase)
+        m = (o >= s.start_ms) & (o < s.end_ms) & strong
+        s.snap_rate = snap_rate(o[m], w[m], s.period, s.phase)
     first = t0 if first_note_ms is None else min(first_note_ms, t0)
     reds = to_red_lines(segs, meter, first)
     return TimingResult(reds, segs, _total_rate(o[strong], w[strong], segs), kind)
@@ -523,6 +496,13 @@ def _finish(s: Segment, o: np.ndarray, w: np.ndarray, act: np.ndarray, down: np.
 
 def _is_global(s: Segment, glob: Segment) -> bool:
     return abs(s.period - glob.period) < 1e-9 and abs(s.phase - glob.phase) < 1e-9
+
+
+def _near_global(s: Segment, glob: Segment, tol_ms: float = 10.0) -> bool:
+    if abs(s.period - glob.period) > 1e-6:
+        return False
+    d = (s.phase - glob.phase) / (glob.period / 4)
+    return abs(d - round(d)) * glob.period / 4 <= tol_ms
 
 
 def _copy_global(s: Segment, glob: Segment) -> Segment:
@@ -553,9 +533,6 @@ def _total_rate(o: np.ndarray, w: np.ndarray, segs: Sequence[Segment]) -> float:
 def to_red_lines(segs: Sequence[Segment], meter: int, first_ms: float) -> List[RedLine]:
     reds: List[RedLine] = []
     for n, s in enumerate(segs):
-        if s.per_beat:
-            reds.append(RedLine(s.phase, s.period, meter))
-            continue
         measure = s.period * meter
         anchor = s.downbeat if s.downbeat is not None else s.phase
         if n == 0:

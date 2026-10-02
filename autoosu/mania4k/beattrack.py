@@ -9,7 +9,6 @@ downloaded once into the torch hub cache.
 from __future__ import annotations
 
 import inspect
-from pathlib import Path
 from typing import Optional, Tuple
 
 import numpy as np

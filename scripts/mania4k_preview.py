@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from PIL import Image, ImageDraw                                      # noqa: E402
 
-from autoosu.mania4k.chart import load_osu, red_line_at, snap_of      # noqa: E402
+from autoosu.mania4k.chart import load_osu, snap_of                   # noqa: E402
 
 SNAP_COLOURS = {1: (235, 235, 235), 2: (230, 70, 70), 4: (70, 130, 240), 8: (240, 210, 60),
                 3: (170, 90, 230), 6: (240, 120, 200), 12: (130, 130, 130), 16: (130, 130, 130), None: (110, 110, 110)}
