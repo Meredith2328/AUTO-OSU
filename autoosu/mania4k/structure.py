@@ -2,11 +2,12 @@
 
 Vocabulary (4K community terms; full definitions and sources in docs/mania4k_patterns.md):
 
-* 切 / stream family (no jacks, fingers alternate) - ``jumpstream``: streams with two-note chords
-  (ljs / djs, also jumptrills and splits); ``handstream``: with three-note chords (lhs / dhs);
-  ``trill``: two lanes or lane groups alternating (交互, one-hand switching).
+* 切 / stream family (no jacks, chords as the backbone) - ``jumpstream``: streams with two-note
+  chords (ljs / djs, also jumptrills and splits); ``handstream``: with three-note chords (lhs / dhs).
 * 乱 / speed family (fast single notes, no jacks) - ``stream``: scattered single notes;
   ``roll``: stairs (1234 / 4321) and their variants.
+* 交互 (alternation, one- or two-handed) is not a type: it is the building block of all of the
+  families above, measured per window as ``WindowStats.trill``.
 * 叠 / jack family - ``jack``: single notes repeating a lane (incl. minijacks); ``chordjack``:
   chords sharing lanes with the previous row (小/中/大叠).
 * 技 / ``mixed``: stream and jack interleaved in one window (tech).
@@ -23,8 +24,8 @@ from typing import Dict, List, Sequence, Tuple
 
 import numpy as np
 
-TYPES = ("light", "stream", "trill", "roll", "jumpstream", "handstream", "jack", "chordjack", "ln", "mixed")
-FAMILY = {"light": "light", "stream": "乱", "roll": "乱", "trill": "切", "jumpstream": "切", "handstream": "切",
+TYPES = ("light", "stream", "roll", "jumpstream", "handstream", "jack", "chordjack", "ln", "mixed")
+FAMILY = {"light": "light", "stream": "乱", "roll": "乱", "jumpstream": "切", "handstream": "切",
           "jack": "叠", "chordjack": "叠", "ln": "LN", "mixed": "技"}
 
 
@@ -50,7 +51,7 @@ class WindowStats:
     nps: float
     chord: float          # notes per row
     jack: float           # share of consecutive row pairs sharing a lane
-    trill: float          # share of rows equal to the row two back and disjoint from the previous
+    trill: float          # 交互: share of rows equal to the row two back and disjoint from the previous
     roll: float           # share of single-note rows continuing a +-1 lane staircase
     ln: float             # share of rows starting a long note
     triple: float         # share of rows with >= 3 notes
@@ -91,8 +92,6 @@ def classify(s: WindowStats, light_nps: float) -> str:
     if s.jack >= 0.4:
         return "jack"
     if s.jack <= 0.2:
-        if s.trill >= 0.5:
-            return "trill"
         if s.roll >= 0.4:
             return "roll"
         return "jumpstream" if s.chord >= 1.2 else "stream"

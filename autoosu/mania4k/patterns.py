@@ -20,7 +20,7 @@ HISTORY = 8
 MASKS = list(range(16))
 POPCOUNT = np.array([bin(m).count("1") for m in MASKS])
 MIRROR = np.array([int(f"{m:04b}"[::-1], 2) for m in MASKS])   # lane l -> 3 - l
-N_STYLES = 10          # structure.TYPES: the planned pattern type of the row's section
+N_STYLES = 9           # structure.TYPES: the planned pattern type of the row's section
 N_ARCH = 5             # structure.ARCHETYPES: the chart's overall style
 FEAT_DIM = 4 + 2 + 4 + 4 + 1 + HISTORY * 5 + 1 + N_STYLES + N_ARCH
 

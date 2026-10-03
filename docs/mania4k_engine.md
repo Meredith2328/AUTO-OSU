@@ -157,15 +157,16 @@ no section feel, no emotional arc. v2 is built on what human charts actually do,
 corpus with `autoosu/mania4k/structure.py`:
 
 * **Pattern types per measure** (taxonomy, community sources and thresholds:
-  [mania4k_patterns.md](mania4k_patterns.md)): jumpstream, handstream, trill (切 / stream);
+  [mania4k_patterns.md](mania4k_patterns.md)): jumpstream, handstream (切 / stream);
   stream, roll (乱 / speed); jack, chordjack (叠 / jack); mixed (技 / tech); LN; light.
+  Alternation (交互, trills) is a building block of all of them, not a type.
 * **Charts first commit to an archetype**, and the distributions only make sense within one
   (849 ranked charts):
 
   | archetype | charts | median ★ | main families |
   | --- | --- | --- | --- |
-  | 切 stream | 211 | 3.1 | 切 56 %, 乱 19 % |
-  | 乱 speed | 129 | 1.7 | 乱 59 %, 切 22 % (35 charts ≥ 3★) |
+  | 切 stream | 203 | 3.1 | 切 55 %, 乱 20 % |
+  | 乱 speed | 137 | 1.6 | 乱 61 %, 切 20 % (37 charts ≥ 3★) |
   | 叠 jack | 61 | 4.1 | 叠 42 %, 切 19 %, 技 11 % |
   | LN | 281 | 3.3 | LN 73 % |
   | 混合 hybrid | 167 | 3.4 | LN 33 %, 切 31 %, 技 13 % |

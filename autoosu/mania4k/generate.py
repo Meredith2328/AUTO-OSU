@@ -314,7 +314,7 @@ _STYLE_IDX = {name: i for i, name in enumerate(TYPES)}
 
 def style_bias(st: RowState, style: int, t: float, beat_ms: float, strength: float = 1.5) -> np.ndarray:
     """Logit bonus that makes the planned pattern type clearly recognisable: staircases for rolls,
-    ABAB for trills, shared lanes for jacks/chordjacks, no shared lanes for streams."""
+    shared lanes for jacks/chordjacks, no shared lanes for streams."""
     b = np.zeros(16)
     hist = st.history
     if not hist:
@@ -326,10 +326,8 @@ def style_bias(st: RowState, style: int, t: float, beat_ms: float, strength: flo
         overlap = (m & prev) != 0
         if name in ("jack", "chordjack"):
             b[m] += strength * (1.0 if overlap else -0.5)
-        elif name in ("stream", "jumpstream", "handstream", "roll", "trill") and close:
+        elif name in ("stream", "jumpstream", "handstream", "roll") and close:
             b[m] -= strength * (1.0 if overlap else 0.0)
-    if name == "trill" and len(hist) >= 2:
-        b[hist[-2][0]] += strength
     if name == "roll" and len(hist) >= 2 and bin(prev).count("1") == bin(hist[-2][0]).count("1") == 1:
         a, c = hist[-2][0].bit_length(), prev.bit_length()
         nxt = c + (c - a)

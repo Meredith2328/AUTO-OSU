@@ -161,13 +161,14 @@ def test_pattern_types_are_recognised():
     from autoosu.mania4k.structure import chart_profile
 
     reds = [RedLine(1000.0, 500.0)]
-    cases = {
-        "roll": [1, 2, 4, 8, 4, 2, 1, 2, 4, 8, 4, 2, 1, 2, 4, 8] * 4,
-        "trill": [1, 2] * 32,
-        "chordjack": [3, 7, 3, 14, 6, 7, 3, 11] * 8,
-        "jumpstream": [5, 2, 8, 1, 10, 4, 1, 8] * 8,
-    }
-    for want, masks in cases.items():
+    cases = [
+        ("roll", [1, 2, 4, 8, 4, 2, 1, 2, 4, 8, 4, 2, 1, 2, 4, 8] * 4),
+        ("stream", [1, 2] * 32),                     # 交互 of single notes: speed family
+        ("jumpstream", [3, 12] * 32),                # 交互 of jumps (jumptrill): stream family
+        ("jumpstream", [5, 2, 8, 1, 10, 4, 1, 8] * 8),
+        ("chordjack", [3, 7, 3, 14, 6, 7, 3, 11] * 8),
+    ]
+    for want, masks in cases:
         p = chart_profile(_rows_to_notes(masks), reds)
         active = [t for t in p["types"] if t != "light"]
         assert max(set(active), key=active.count) == want, (want, active)
@@ -200,7 +201,8 @@ def test_pattern_families_use_community_terms():
     from autoosu.mania4k.structure import ARCHETYPES, FAMILY
 
     assert FAMILY["stream"] == FAMILY["roll"] == "乱"                                 # speed: fast single notes
-    assert FAMILY["jumpstream"] == FAMILY["handstream"] == FAMILY["trill"] == "切"    # stream: chords, switching
+    assert FAMILY["jumpstream"] == FAMILY["handstream"] == "切"                     # stream: chords as backbone
+    assert "trill" not in FAMILY                                                     # 交互 is a building block
     assert FAMILY["jack"] == FAMILY["chordjack"] == "叠"
     assert FAMILY["mixed"] == "技"
     assert ARCHETYPES == ("切", "乱", "叠", "LN", "混合")
