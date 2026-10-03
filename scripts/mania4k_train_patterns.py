@@ -20,10 +20,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from autoosu.mania4k.chart import RedLine, red_line_at                          # noqa: E402
 from autoosu.mania4k.patterns import (POPCOUNT, PatternNet, RowState, advance,   # noqa: E402
                                       row_features)
+from autoosu.mania4k.structure import ARCHETYPES, TYPES, chart_archetype, chart_profile  # noqa: E402
 
 
 def chart_rows(notes: np.ndarray, reds, stars: float, mirror: bool):
-    """Features and mask labels of every row of one chart."""
+    """Features and mask labels of every row of one chart, conditioned on the human chart's own
+    window types (the section style) and archetype."""
+    prof = chart_profile(notes, reds)
+    arch = ARCHETYPES.index(chart_archetype(prof["types"]))
+    w_start = np.array([a for a, _ in prof["windows"]]) if prof["windows"] else np.zeros(1)
+    w_type = [TYPES.index(t) for t in prof["types"]] or [1]
     t = np.round(notes[:, 0], 1)
     lanes = notes[:, 1].astype(int)
     if mirror:
@@ -44,7 +50,9 @@ def chart_rows(notes: np.ndarray, reds, stars: float, mirror: bool):
             if e > t[i]:
                 ln_end[l] = e
         k = bin(mask).count("1")
-        X.append(row_features(st, float(t[i]), k, any(ln_end), red_line_at(reds, t[i]).beat_ms, stars))
+        wi = int(np.clip(np.searchsorted(w_start, t[i], side="right") - 1, 0, len(w_type) - 1))
+        X.append(row_features(st, float(t[i]), k, any(ln_end), red_line_at(reds, t[i]).beat_ms, stars,
+                              w_type[wi], arch))
         Y.append(mask)
         advance(st, float(t[i]), mask, ln_end)
         i = j

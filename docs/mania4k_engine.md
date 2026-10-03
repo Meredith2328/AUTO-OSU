@@ -149,3 +149,66 @@ python scripts/mania4k_eval_timing.py --corpus ~/data/mania4k [--baseline]
 python scripts/mania4k_eval.py --prepared ~/data/prepared --corpus ~/data/mania4k [--baseline]
 python scripts/mania4k_preview.py chart.osu -o chart.png --start 30 --seconds 20
 ```
+
+## v2: archetypes, sections and intensity
+
+Human review of v1 (70/100): sync and difficulty right, but patterns monotonous (almost all speed / 乱),
+no section feel, no emotional arc. v2 is built on what human charts actually do, measured on the
+corpus with `autoosu/mania4k/structure.py`:
+
+* **Pattern types per measure** (taxonomy, community sources and thresholds:
+  [mania4k_patterns.md](mania4k_patterns.md)): jumpstream, handstream (切 / stream); trill sections
+  (长交互: alternation share ≥ 0.5 and an unbroken run ≥ 8 rows, 0.2 % of measures);
+  stream, roll (乱 / speed); jack, chordjack (叠 / jack); mixed (技 / tech); LN; light.
+  Short alternation (交互) is a building block of all of them and only measured.
+* **Charts first commit to an archetype**, and the distributions only make sense within one
+  (849 ranked charts):
+
+  | archetype | charts | median ★ | main families |
+  | --- | --- | --- | --- |
+  | 切 stream | 202 | 3.1 | 切 55 %, 乱 20 % |
+  | 乱 speed | 138 | 1.7 | 乱 61 %, 切 20 % (38 charts ≥ 3★) |
+  | 叠 jack | 61 | 4.1 | 叠 42 %, 切 19 %, 技 11 % |
+  | LN | 281 | 3.3 | LN 73 % |
+  | 混合 hybrid | 167 | 3.4 | LN 33 %, 切 31 %, 技 13 % |
+
+* **Sections**: on music sections found by self-similarity novelty of measure spectra, human charts
+  change density 2.7× more at boundaries than elsewhere (|Δlog nps| 0.38 vs 0.14) and change type
+  81 % vs 64 % of the time; inside a section one type covers 69 % of measures (81 % in LN charts).
+* **Intensity**: measure density follows loudness / high-band flux (Spearman ≈ +0.5), much more
+  than raw attack count (+0.2); by section energy level (rest / low / mid / climax) density goes
+  from −45…−60 % to +5 % of the chart mean, and the harder subtype takes over at climaxes
+  (切: ljs → djs/handstream; 叠: chordjack 29 % → 59 %).
+
+The generator follows the same order (`planner.py`): choose an archetype (`--mania-style`, or auto,
+see [the honesty audit](#v21-honesty-audit-unseen-music) for how; no 叠 below 2★), cut the song
+into music sections, rate their energy, sample one type per section from the human
+P(type | archetype, energy level, previous type) with a secondary type on 4-measure phrases (rate
+per archetype), and scale density by the human density curve. Execution: per-type targets for
+notes per row, triples and LN rows; the pattern model is retrained with section type and
+archetype as inputs (held-out NLL 0.976 vs 0.997), plus small logit biases that make rolls,
+trills, jacks and anti-jack streams recognisable; LN sections hold through the flow.
+
+### Structure harness (`scripts/mania4k_eval_structure.py`)
+
+Generated charts are compared with the ranked chart they were made for (same song and star rating,
+generated in that chart's archetype with `mania4k_eval.py --match-archetype`), and results are
+reported **per archetype**. Held-out test songs, 65 charts:
+
+| | v1 | v2 | human |
+| --- | --- | --- | --- |
+| generated in the ranked chart's archetype | 44 % | **86 %** | |
+| 乱 charts: jumpstream / stream / roll | 47 / 22 / 10 % | **38 / 24 / 14 %** | 40 / 23 / 13 % |
+| 叠 charts: chordjack / jumpstream | 4 / 55 % | **32 / 22 %** | 35 / 18 % |
+| LN charts: LN | 8 % | **80 %** | 77 % |
+| in-section dominant type | 0.59 | 0.75 | 0.69 |
+| type change at music boundaries | 0.62 | 0.60 | 0.68 |
+| density change at music boundaries | 0.32 | 0.50 | 0.37 |
+| density ↔ loudness (Spearman) | 0.42 | 0.38 | 0.40 |
+
+The hard constraints are unchanged: 100 % of charts pass `verify_chart`, 98.4 % of notes lie on
+the ranked chart's own grid, star error 0.15★ on average.
+
+Open points: 混合 charts drift towards 乱 (their LN sections are under-realised); intensity
+coupling in LN and 混合 charts is weaker than human (0.29–0.42 vs 0.45–0.51); density jumps at
+boundaries are stronger than human.

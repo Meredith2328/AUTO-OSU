@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from autoosu.audio import load_audio                                 # noqa: E402
 from autoosu.mania4k.chart import RedLine, load_osu                  # noqa: E402
 from autoosu.mania4k.onsets import onset_envelopes                   # noqa: E402
-from autoosu.mania4k.timing import estimate_timing, tracker_activations  # noqa: E402
+from autoosu.mania4k.timing import estimate_timing, pick_beats, tracker_activations, tracker_deviation  # noqa: E402
 from autoosu.mania4k.verify import timing_report                     # noqa: E402
 
 
@@ -74,11 +74,15 @@ def main() -> None:
                 res = estimate_timing(env, beat, down, first_note_ms=ref.notes[0].time + args.shift,
                                       allow_changes=not args.no_changes)
                 reds, kind = res.red_lines, f"{res.kind[:5]} {res.snap_rate:.2f}"
+                beats = pick_beats(beat)
+                devs = dict(dev_ours=res.tracker_dev_ms, dev_ref=tracker_deviation(
+                    beats, [RedLine(r.time + args.shift, r.beat_ms, r.meter) for r in ref.red_lines]))
             except ValueError as exc:
                 print(d.name, "FAILED", exc, flush=True)
                 continue
         rep = timing_report(ref, reds, args.shift)
-        rows.append(dict(set=d.name, ref_reds=len(ref.red_lines), our_reds=len(reds), kind=kind, **rep.__dict__))
+        rows.append(dict(set=d.name, ref_reds=len(ref.red_lines), our_reds=len(reds), kind=kind, **rep.__dict__,
+                         **(devs if not args.baseline else {})))
         print(f"{d.name:>8} ref {rep.bpm_ref:7.2f}x{len(ref.red_lines):<3} ours {rep.bpm_ours:7.2f}x{len(reds):<3}"
               f" consistent {rep.consistent_5ms:6.1%} <=5ms {rep.within_5ms:6.1%} <=10ms {rep.within_10ms:6.1%} med {rep.median_signed:+5.1f}"
               f" p95 {rep.p95_abs:5.1f}  {time.time() - t0:4.1f}s  {meta['artist'][:20]} - {meta['title'][:30]}",

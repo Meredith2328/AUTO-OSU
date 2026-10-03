@@ -145,3 +145,110 @@ def test_ranked_engine_end_to_end(tmp_path, monkeypatch):
         # every note on the 1/4 or 1/3 grid of the red line
         assert all(snap_of(c.red_lines, n.time, (1, 2, 4, 3, 6), 1.0) is not None for n in c.notes)
     assert any("verified" in line for line in seen)
+
+
+def _rows_to_notes(rows, beat_ms=250.0, t0=1000.0):
+    """rows: list of lane masks, one per 1/4 beat; returns (time, lane, end) notes."""
+    out = []
+    for i, m in enumerate(rows):
+        for l in range(4):
+            if m >> l & 1:
+                out.append((t0 + i * beat_ms / 4 * 2, l, 0.0))
+    return out
+
+
+def test_pattern_types_are_recognised():
+    from autoosu.mania4k.structure import chart_profile
+
+    reds = [RedLine(1000.0, 500.0)]
+    cases = [
+        ("roll", [1, 2, 4, 8, 4, 2, 1, 2, 4, 8, 4, 2, 1, 2, 4, 8] * 4),
+        ("trill", [1, 2] * 32),                      # long alternation: a trill section (长交互)
+        ("trill", [3, 12] * 32),                     # also with jumps (long jumptrill)
+        ("stream", [1, 2, 1, 4, 8, 2, 4, 1, 8, 4, 2, 8, 1, 2, 8, 4] * 4),   # short 交互 inside speed
+        ("jumpstream", [5, 2, 8, 1, 10, 4, 1, 8] * 8),
+        ("chordjack", [3, 7, 3, 14, 6, 7, 3, 11] * 8),
+    ]
+    for want, masks in cases:
+        p = chart_profile(_rows_to_notes(masks), reds)
+        active = [t for t in p["types"] if t != "light"]
+        assert max(set(active), key=active.count) == want, (want, active)
+
+
+def test_archetype_and_plan_follow_the_tables():
+    import numpy as np
+
+    from autoosu.mania4k.planner import Section, choose_archetype, make_plan
+    from autoosu.mania4k.structure import ARCHETYPES, TYPES, chart_archetype
+
+    assert chart_archetype(["ln"] * 6 + ["stream"] * 2) == "LN"
+    assert chart_archetype(["chordjack"] * 4 + ["jumpstream"] * 6) == "叠"
+    assert chart_archetype(["stream"] * 5 + ["roll"] * 1 + ["jumpstream"] * 3 + ["mixed"]) == "乱"
+    assert chart_archetype(["jumpstream"] * 5 + ["handstream"] * 2 + ["stream"] * 3) == "切"
+    assert ARCHETYPES[choose_archetype(1.5, "jack")] == "乱"       # no jack charts below 2 stars
+    assert ARCHETYPES[choose_archetype(4.0, "ln")] == "LN"
+    secs = [Section(i * 8000.0, (i + 1) * 8000.0, 8, e, lv) for i, (e, lv) in
+            enumerate([(-1.5, 0), (0.0, 2), (1.5, 3), (-0.5, 1)] * 3)]
+    plan = make_plan(secs, ARCHETYPES.index("LN"), np.random.default_rng(0))
+    types = [TYPES[s.type] for s in plan.sections]
+    assert types.count("ln") >= len(types) // 2                  # an LN chart is mostly LN
+    rest = [s.density for s in plan.sections if s.level == 0]
+    peak = [s.density for s in plan.sections if s.level == 3]
+    assert max(rest) < min(peak)                                  # quiet sections sparser than climaxes
+    assert all(TYPES[s.type] != "light" for s in plan.sections if s.level >= 2)
+
+
+def test_pattern_families_use_community_terms():
+    from autoosu.mania4k.structure import ARCHETYPES, FAMILY
+
+    assert FAMILY["stream"] == FAMILY["roll"] == "乱"                                 # speed: fast single notes
+    assert FAMILY["jumpstream"] == FAMILY["handstream"] == "切"                     # stream: chords as backbone
+    assert FAMILY["trill"] == "交互"                                                 # trill section (长交互)
+    assert FAMILY["jack"] == FAMILY["chordjack"] == "叠"
+    assert FAMILY["mixed"] == "技"
+    assert ARCHETYPES == ("切", "乱", "叠", "LN", "混合")
+
+
+def test_style_model_reads_the_music():
+    from autoosu.mania4k.planner import choose_archetype
+    from autoosu.mania4k.style import DESCRIPTORS, archetype_probs, song_descriptors
+
+    rng = np.random.default_rng(0)
+    mel = rng.integers(0, 255, size=(4000, 64)).astype(np.uint8)
+    env = [rng.random(16000).astype(np.float32) for _ in range(4)]
+    x = song_descriptors(mel, *env, 344.5, 170.0, 3.2)
+    assert x.shape == (len(DESCRIPTORS),) and np.isfinite(x).all()
+    p = archetype_probs(x)
+    assert p is not None and abs(p.sum() - 1) < 1e-9
+    assert choose_archetype(3.2, "auto", descriptors=x) == int(np.argmax(p))
+    assert choose_archetype(3.2, "ln", descriptors=x) == 3                          # a request wins
+
+
+def test_bpm_changes_get_normalized_scroll_speed():
+    from autoosu.mania4k.generate import normalized_sv
+
+    reds = [RedLine(0.0, 500.0, 4), RedLine(60000.0, 400.0, 4), RedLine(70000.0, 500.0, 4)]
+    sv = normalized_sv(reds, 120000.0)
+    assert sv[0] == sv[2] == 1.0 and abs(sv[1] - 0.8) < 1e-9          # 150 BPM part scrolls at 120 BPM speed
+    assert normalized_sv(reds[:1], 120000.0) == [1.0]
+
+
+def test_drifting_performance_gets_a_tempo_map():
+    from autoosu.mania4k.timing import tracker_deviation
+
+    sr = 22050
+    rng = np.random.default_rng(1)
+    t, beats = 0.5, []
+    for k in range(160):                       # a player drifting 112 -> 128 BPM, wobbling every few beats
+        beats.append(t * 1000)
+        bpm = 112 + 16 * k / 160 + 6 * np.sin(k / 4)
+        t += 60.0 / bpm
+    y = np.zeros(int((t + 1) * sr))
+    n = int(0.04 * sr)
+    for k, b in enumerate(beats):
+        i = int(b / 1000 * sr)
+        y[i:i + n] += rng.normal(size=n) * np.exp(-np.arange(n) / (0.006 * sr)) * (1.0 if k % 4 == 0 else 0.6)
+    beat, down = logits_for(beats, beats[::4], len(y) / sr * 1000)
+    res = estimate_timing(onset_envelopes(y, sr), beat, down)
+    assert res.kind == "follow" and len(res.red_lines) > 4
+    assert tracker_deviation(np.array(beats), res.red_lines) < 10.0     # one constant grid: 20+ ms

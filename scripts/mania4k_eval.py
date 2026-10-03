@@ -133,6 +133,9 @@ def main() -> None:
     ap.add_argument("--baseline", action="store_true")
     ap.add_argument("--out", default="")
     ap.add_argument("--shard", default="0/1", help="i/n: evaluate every n-th test song starting at i")
+    ap.add_argument("--save-dir", default="", help="write generated charts as JSON (audio time) for analysis")
+    ap.add_argument("--match-archetype", action="store_true",
+                    help="generate each chart in the archetype (stream/speed/jack/LN/hybrid) of its ranked chart")
     args = ap.parse_args()
     si, sn = (int(x) for x in args.shard.split("/"))
     models = None if args.baseline else load_models()
@@ -169,9 +172,21 @@ def main() -> None:
                 sr_got = star_rating(chart_to_osu_text(chart, shift_ms=0.0)) if chart.notes else 0.0
                 check = verify_chart(chart, None, rules_for(c["stars"]))
             else:
-                chart, rep = generate_chart(an, c["version"][:40] or "x", c["stars"], models=models)
+                arch = None
+                if args.match_archetype:
+                    from autoosu.mania4k.structure import ARCHETYPES, chart_archetype, chart_profile
+
+                    arch = ARCHETYPES.index(chart_archetype(chart_profile(
+                        z[f"{c['key']}_notes"], [RedLine(*x) for x in c["reds"]])["types"]))
+                chart, rep = generate_chart(an, c["version"][:40] or "x", c["stars"], models=models, archetype=arch)
                 sr_got = rep.stars
                 check = verify_chart(chart, an.features.env, rules_for(c["stars"]))
+            if args.save_dir:
+                Path(args.save_dir).mkdir(parents=True, exist_ok=True)
+                Path(args.save_dir, f"{meta['set']}_{c['key']}.json").write_text(json.dumps(dict(
+                    set=meta["set"], key=c["key"], stars=c["stars"], got=sr_got,
+                    reds=[(r.time, r.beat_ms, r.meter) for r in chart.red_lines],
+                    notes=[(n.time, n.lane, n.end) for n in chart.notes])))
             g, r = stats(chart.notes), stats(ns)
             prec = matched(g["heads"], union) / max(1, len(g["heads"]))
             rec = matched(r["heads"], g["heads"]) / max(1, len(r["heads"]))

@@ -145,7 +145,7 @@ def cached_model(cache: Dict, kind: str, path: str, device: str, loader):
 def _generate_mania4k(audio_path, difficulties: List[str], out_dir, seed: int, title: Optional[str],
                       artist: Optional[str], creator: str, log, progress: Optional[ProgressFn],
                       star_rating: Optional[float], bpm: Optional[float] = None,
-                      offset_ms: Optional[float] = None) -> GenerateResult:
+                      offset_ms: Optional[float] = None, style: str = "auto") -> GenerateResult:
     """osu!mania 4K with the ranked-calibrated engine (autoosu.mania4k)."""
     from .mania4k.generate import (DIFFICULTIES, OSU_SHIFT_MS, analyse_song, build_beatmap as build_4k,
                                    generate_chart, load_models, rules_for)
@@ -176,6 +176,13 @@ def _generate_mania4k(audio_path, difficulties: List[str], out_dir, seed: int, t
         f"{r.time / 1000:.1f}s ({r.bpm:g})" for r in tm.red_lines[1:6])
     log(f"[3/4] timing: main BPM {bpm:g}, {len(tm.red_lines)} red line(s){changes} "
         f"(written {OSU_SHIFT_MS:g} ms early, ranked osu! convention)")
+    if tm.kind == "follow":
+        log("      the performance's tempo drifts: red lines follow it measure by measure, "
+            "SV keeps the scroll speed constant")
+    elif tm.kind != "forced" and tm.tracker_dev_ms > 20.0:
+        log(f"      warning: no steady beat found (beat tracker and grid disagree by "
+            f"{tm.tracker_dev_ms:.0f} ms); every note still sits on an attack, but the rhythm grid may "
+            f"read oddly. Consider --bpm / --offset.")
     meta_title, meta_artist = read_metadata(audio_path)
     title, artist = title or meta_title, artist or meta_artist
     workdir = out_dir / ".work"
@@ -190,18 +197,26 @@ def _generate_mania4k(audio_path, difficulties: List[str], out_dir, seed: int, t
         background = extract_video_frame(audio_path, workdir / "bg.jpg")
     log("[4/4] generating difficulties")
     models = load_models()
+    from .mania4k.planner import choose_archetype
+    from .mania4k.structure import ARCHETYPES
+    from .mania4k.style import analysis_descriptors
+
+    STYLE_LABEL = {"切": "stream", "乱": "speed", "叠": "jack", "LN": "LN", "混合": "hybrid"}
     diffs: List[DiffResult] = []
     prev_stars: Optional[float] = None
     for i, name in enumerate(sorted(names, key=lambda n: DIFFICULTIES[n])):
         report(0.35 + 0.6 * i / len(names), f"{name}: notes")
         target = star_rating if (star_rating is not None and len(names) == 1) else DIFFICULTIES[name]
-        chart, rep = generate_chart(an, name, target, seed=seed * 1000 + i, models=models)
+        # chart style per difficulty, like ranked sets (70 % of them mix styles across difficulties):
+        # the requested one, or what mappers chose for such music at this star rating
+        arch = choose_archetype(target, style, descriptors=analysis_descriptors(an, target))
+        chart, rep = generate_chart(an, name, target, seed=seed * 1000 + i, models=models, archetype=arch)
         if (prev_stars is not None and target - rep.stars > 0.5 and rep.stars - prev_stars < 0.4):
             log(f"      {name:<7} skipped: the song only supports {rep.stars:.2f}* without overmapping "
                 f"(target {target:.2f}), too close to the previous difficulty")
             continue
         prev_stars = rep.stars
-        chart.version = f"{name} 4K"
+        chart.version = f"{name} 4K ({STYLE_LABEL[ARCHETYPES[arch]]})"
         check = verify_chart(chart, an.features.env, rules_for(target))
         if not check.ok:
             raise RuntimeError(f"{name}: generated chart failed verification ({', '.join(check.problems)})")
@@ -212,8 +227,9 @@ def _generate_mania4k(audio_path, difficulties: List[str], out_dir, seed: int, t
         res = DiffResult(preset, [], bm)
         diffs.append(res)
         s = res.summary()
-        log(f"      {name:<7} {rep.stars:4.2f}* (target {target:.2f})  {s['objects']:4d} notes "
+        log(f"      {name:<7} {STYLE_LABEL[ARCHETYPES[arch]]:<6} {rep.stars:4.2f}* (target {target:.2f})  {s['objects']:4d} notes "
             f"({s['circles']} taps, {s['holds']} holds) {s['nps']:.2f} notes/s  OD {chart.od:g} HP {chart.hp:g}  verified")
+        log(f"              sections: {rep.plan}")
     if not diffs:
         raise RuntimeError("no difficulty could be generated for this song")
     report(0.97, "package")
@@ -237,7 +253,7 @@ def generate(audio_path: str | Path, difficulties: List[str], out_dir: str | Pat
              mania_model: Optional[str] = None, mania_device: str = "auto",
              mania_target_nps: Optional[float] = None,
              mania_threshold: Optional[float] = None,
-             mania_engine: str = "ranked") -> GenerateResult:
+             mania_engine: str = "ranked", mania_style: str = "auto") -> GenerateResult:
     """Analyse a song and write one .osz with the requested difficulties.
 
     rhythm_model / coord_model: paths to the trained models; without them the rule-based layers run.
@@ -256,7 +272,7 @@ def generate(audio_path: str | Path, difficulties: List[str], out_dir: str | Pat
         raise ValueError(f"Unknown mania engine {mania_engine!r}; choose ranked or rules")
     if mode == "mania4k" and not mania_model and mania_engine == "ranked":
         return _generate_mania4k(audio_path, difficulties, out_dir, seed, title, artist, creator, log,
-                                 progress, star_rating, bpm, offset_ms)
+                                 progress, star_rating, bpm, offset_ms, mania_style)
     t0 = _time.perf_counter()
     audio_path, out_dir = Path(audio_path), Path(out_dir)
     presets = [get_preset(d) for d in difficulties]

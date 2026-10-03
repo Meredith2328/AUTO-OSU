@@ -52,6 +52,7 @@ class TimingResult:
     segments: List[Segment]
     snap_rate: float          # share of strong onsets on the final grid
     kind: str                 # constant | changes | forced
+    tracker_dev_ms: float = 0.0   # median distance of the tracker's beats from the half-beat grid
 
 
 # --------------------------------------------------------------------------- tracker
@@ -78,6 +79,18 @@ def pick_beats(logit: np.ndarray, fps: float = TRACKER_FPS, threshold: float = 0
         out.append((i + frac) / fps * 1000.0)
         last = i
     return np.array(out)
+
+
+def tracker_deviation(beats: np.ndarray, reds: Sequence[RedLine]) -> float:
+    """Median distance (ms) of tracker beats from the nearest half beat of the red-line grid. A few ms
+    on a right grid; 20+ ms when the grid and the performance disagree (drifting tempo, wrong BPM)."""
+    if not len(beats) or not reds:
+        return 99.0
+    times = np.array([r.time for r in reds])
+    k = np.clip(np.searchsorted(times, beats + 1.0, side="right") - 1, 0, len(reds) - 1)
+    half = np.array([reds[i].beat_ms / 2 for i in k])
+    u = (beats - times[k]) / half
+    return float(np.median(np.abs(u - np.round(u)) * half))
 
 
 def dominant_period(beats: np.ndarray) -> float:
@@ -424,6 +437,81 @@ def _merge(o: np.ndarray, w: np.ndarray, segs: List[Segment]) -> List[Segment]:
     return out
 
 
+# --------------------------------------------------------------------------- drifting tempo
+
+DRIFT_DEV_MS = 20.0          # tracker vs grid disagreement that triggers the tempo-map check
+DRIFT_MAX_CV = 0.08          # the tracker must be locally steady to be followed
+
+
+def local_ibi_cv(beats: np.ndarray, n: int = 8) -> float:
+    """Median local variation of the tracker's inter-beat intervals (0 = metronomic)."""
+    ibi = np.diff(beats)
+    if len(ibi) < n:
+        return 9.0
+    cv = [np.std(ibi[i:i + n]) / np.mean(ibi[i:i + n]) for i in range(0, len(ibi) - n + 1)]
+    return float(np.median(cv))
+
+
+def _regular_beats(beats: np.ndarray, period: float) -> Optional[np.ndarray]:
+    """Tracker beats at the grid's metrical level, gaps filled and doubles removed."""
+    med = float(np.median(np.diff(beats)))
+    ratio = med / period
+    if abs(ratio - 2.0) < 0.15:                    # tracker counts half notes: add the midpoints
+        beats = np.sort(np.concatenate([beats, (beats[:-1] + beats[1:]) / 2]))
+    elif abs(ratio - 0.5) < 0.08:
+        beats = beats[::2]
+    elif abs(ratio - 1.0) > 0.08:
+        return None
+    out = [float(beats[0])]
+    for t in beats[1:]:
+        gap = t - out[-1]
+        if gap < 0.55 * period:
+            continue
+        k = int(round(gap / period))
+        if k >= 2:                                 # missed beats: fill evenly
+            out += [out[-1] + gap * j / k for j in range(1, k)]
+        out.append(float(t))
+    return np.array(out)
+
+
+def follow_tracker(o: np.ndarray, w: np.ndarray, beats: np.ndarray, down: np.ndarray, glob: Segment,
+                   meter: int) -> Optional[List[Segment]]:
+    """A tempo map for performances whose tempo drifts: one segment per measure between tracker
+    downbeats, each beat pulled onto a strong attack within +-30 ms, measures with the same tempo
+    merged. This is how human mappers time rubato and live recordings (many red lines + SV)."""
+    b = _regular_beats(beats, glob.period)
+    if b is None or len(b) < 4 * meter:
+        return None
+    strong = w >= 0.25 ** 1.5
+    os_, ws_ = o[strong], w[strong]
+    snapped = b.copy()
+    for i, t in enumerate(b):
+        m = np.abs(os_ - t) <= min(30.0, 0.15 * glob.period)
+        if m.any():
+            snapped[i] = float(os_[m][np.argmax(ws_[m] - np.abs(os_[m] - t) / 100.0)])
+    fr = np.clip(np.round(snapped / 1000.0 * TRACKER_FPS).astype(int), 0, len(down) - 1)
+    k0 = int(np.argmax([down[fr[k::meter]].mean() for k in range(meter)]))
+    anchors = snapped[k0::meter]
+    segs: List[Segment] = []
+    for a, c in zip(anchors[:-1], anchors[1:]):
+        p = (c - a) / meter
+        if segs and abs(p - segs[-1].period) < 0.003 * p:
+            prev = segs[-1]
+            n = round((c - prev.phase) / prev.period)
+            segs[-1] = Segment(prev.start_ms, c, (c - prev.phase) / n, prev.phase, 0.0, prev.downbeat)
+        else:
+            segs.append(Segment(a, c, p, a, 0.0, a))
+    if not segs:
+        return None
+    first, last = segs[0], segs[-1]
+    segs[0] = Segment(glob.start_ms, first.end_ms, first.period, first.phase, 0.0, first.downbeat)
+    segs[-1] = Segment(last.start_ms, max(glob.end_ms, last.end_ms), last.period, last.phase, 0.0, last.downbeat)
+    for s in segs:
+        m = (o >= s.start_ms) & (o < s.end_ms)
+        s.snap_rate = snap_rate(o[m], w[m], s.period, s.phase) if m.any() else 0.0
+    return segs
+
+
 # --------------------------------------------------------------------------- main entry
 
 def estimate_timing(env: OnsetEnvelopes, beat_logit: np.ndarray, down_logit: np.ndarray,
@@ -479,7 +567,17 @@ def estimate_timing(env: OnsetEnvelopes, beat_logit: np.ndarray, down_logit: np.
         s.snap_rate = snap_rate(o[m], w[m], s.period, s.phase)
     first = t0 if first_note_ms is None else min(first_note_ms, t0)
     reds = to_red_lines(segs, meter, first)
-    return TimingResult(reds, segs, _total_rate(o[strong], w[strong], segs), kind)
+    rate, dev = _total_rate(o[strong], w[strong], segs), tracker_deviation(beats, reds)
+    if allow_changes and dev > DRIFT_DEV_MS and local_ibi_cv(beats) <= DRIFT_MAX_CV:
+        # the performance drifts against every constant grid but the tracker follows it steadily:
+        # use a tempo map if it agrees with the tracker far better without losing attacks
+        fol = follow_tracker(o, w, beats, down, glob, meter)
+        if fol is not None:
+            f_reds = to_red_lines(fol, meter, first)
+            f_rate, f_dev = _total_rate(o[strong], w[strong], fol), tracker_deviation(beats, f_reds)
+            if f_rate >= rate + 0.01 and f_dev <= dev / 2:
+                return TimingResult(f_reds, fol, f_rate, "follow", f_dev)
+    return TimingResult(reds, segs, rate, kind, dev)
 
 
 def _finish(s: Segment, o: np.ndarray, w: np.ndarray, act: np.ndarray, down: np.ndarray, meter: int) -> Segment:

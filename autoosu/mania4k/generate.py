@@ -21,7 +21,8 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import torch
 
-from .chart import KEYS, Chart, Note
+from .chart import KEYS, Chart, Note, RedLine
+from .structure import TYPES
 from .features import DIV_CLASSES, POS_DIV, Grid, SongFeatures, build_grid, env_matrix, local_loudness, mel_index, song_features
 from .model import LN_BINS, NoteNet
 from .onsets import OnsetEnvelopes, attack_times, near_attack
@@ -70,6 +71,7 @@ class SongAnalysis:
     timing: TimingResult
     grid: Grid
     support: np.ndarray                 # per tick: True when an attack sits on the tick
+    sections: list = field(default_factory=list)    # planner.Section: music sections + energy
     probs: Dict[float, Dict[str, np.ndarray]] = field(default_factory=dict)   # by star target
 
 
@@ -105,7 +107,10 @@ def analyse_song(path: str | Path, y: Optional[np.ndarray] = None, sr: Optional[
     first = float(o[0]) if len(o) else 0.0
     last = float(o[-1]) if len(o) else feat.duration_ms
     grid = build_grid(timing.red_lines, max(0.0, first - 50.0), min(feat.duration_ms - 30.0, last + 50.0))
-    return SongAnalysis(path, feat.duration_ms, feat, timing, grid, onset_support(feat.env, grid.times))
+    from .planner import music_sections
+
+    secs = music_sections(feat.mel, feat.env, timing.red_lines, float(grid.times[0]), float(grid.times[-1]) + 1)
+    return SongAnalysis(path, feat.duration_ms, feat, timing, grid, onset_support(feat.env, grid.times), secs)
 
 
 @torch.no_grad()
@@ -134,17 +139,25 @@ class Row:
     k: int
     ln: bool
     ln_beats: float
+    style: int = 1             # planned pattern type of the row's section (structure.TYPES)
 
 
 def select_rows(an: SongAnalysis, probs: Dict[str, np.ndarray], rules: Rules, theta: float,
-                chord_boost: float = 1.0) -> List[Row]:
+                chord_boost: float = 1.0, plan=None, contrast: float = 0.8) -> List[Row]:
+    """Rows above theta, with each section's density scaled by its planned relative density, and
+    chords / long notes given per section in the proportions human charts use for its pattern type."""
+    from .planner import type_targets
+
     g = an.grid
     p_note = 1.0 - probs["count"][:, 0]
+    sec = plan.section_of(g.times) if plan is not None else np.zeros(len(g), int)
+    weight = np.exp(contrast * np.array([s.density for s in plan.sections]))[sec] if plan is not None else 1.0
+    score = p_note * weight
     divs = np.array([DIV_CLASSES[d] for d in g.div])
     # 1/8 only where it is a playable rhythm rather than a flam (>= 55 ms apart)
     allowed_div = np.isin(divs, rules.divisors) & ((divs != 8) | (g.beat_ms / 8.0 >= 55.0))
-    cand = np.where((p_note >= theta) & an.support & allowed_div)[0]
-    order = cand[np.argsort(-p_note[cand], kind="stable")]
+    cand = np.where((score >= theta) & an.support & allowed_div)[0]
+    order = cand[np.argsort(-score[cand], kind="stable")]
     taken: List[float] = []
     chosen: List[int] = []
     for i in order:
@@ -159,28 +172,48 @@ def select_rows(an: SongAnalysis, probs: Dict[str, np.ndarray], rules: Rules, th
     chosen = consistent_snaps(g, sorted(chosen), p_note)
     if not chosen:
         return []
-    pc = probs["count"][chosen]
+    chosen_arr = np.array(chosen)
+    pc = probs["count"][chosen_arr]
     cond = pc[:, 1:] / np.maximum(pc[:, 1:].sum(1, keepdims=True), 1e-9)     # p(k | note)
     ge2, ge3, ge4 = cond[:, 1:].sum(1), cond[:, 2:].sum(1), cond[:, 3]
-    # keep the model's expected share of chords, giving them to the most chord-like rows
+    p_ln = probs["ln"][chosen_arr]
     k = np.ones(len(chosen), int)
-    for level, share_p in ((2, ge2), (3, ge3), (4, ge4)):
-        if level > rules.max_chord:
-            break
-        n = min(int(round(share_p.sum() * chord_boost)), int(round(rules.max_chord_share * len(chosen))))
-        if n <= 0:
+    ln = np.zeros(len(chosen), bool)
+    groups = [np.arange(len(chosen))] if plan is None else \
+        [np.where(sec[chosen_arr] == j)[0] for j in range(len(plan.sections))]
+    for j, idx in enumerate(groups):
+        if len(idx) == 0:
             continue
-        top = np.argsort(-share_p, kind="stable")[:n]
-        k[top[k[top] >= level - 1]] = level
-    # long notes on the rows the model finds most sustained, at most the difficulty's share
-    p_ln = probs["ln"][chosen]
-    confident = np.where(p_ln >= 0.25)[0]
-    n_ln = min(len(confident), int(rules.max_ln_share * len(chosen)))
-    ln_rows = set(confident[np.argsort(-p_ln[confident], kind="stable")[:n_ln]].tolist())
+        if plan is None:
+            shares = (ge2[idx].sum() / len(idx), ge3[idx].sum() / len(idx), ge4[idx].sum() / len(idx))
+            ln_share, ln_floor = rules.max_ln_share, 0.25
+            cap = rules.max_chord_share
+        else:
+            tg = type_targets(plan.sections[j].type)
+            multi = max(0.0, tg["notes_per_row"] - 1.0 - tg["triple"])          # rows with >= 2 notes
+            shares = (multi, tg["triple"], tg["triple"] * 0.15)
+            heavy = TYPES[plan.sections[j].type] in ("chordjack", "handstream")
+            cap = 0.95 if heavy else rules.max_chord_share * 1.25
+            ln_share = tg["ln_rows"] if TYPES[plan.sections[j].type] == "ln" else min(tg["ln_rows"], rules.max_ln_share)
+            ln_floor = 0.0 if TYPES[plan.sections[j].type] == "ln" else 0.25
+        for level, share, rank in ((2, min(shares[0] * chord_boost, cap), ge2), (3, shares[1] * chord_boost, ge3),
+                                   (4, shares[2], ge4)):
+            if level > rules.max_chord:
+                break
+            n = int(round(share * len(idx)))
+            if n <= 0:
+                continue
+            top = idx[np.argsort(-rank[idx], kind="stable")[:n]]
+            k[top[k[top] >= level - 1]] = level
+        conf = idx[p_ln[idx] >= ln_floor]
+        n_ln = min(len(conf), int(round(ln_share * len(idx))))
+        if n_ln > 0:
+            ln[conf[np.argsort(-p_ln[conf], kind="stable")[:n_ln]]] = True
     rows = []
     for r, i in enumerate(chosen):
         beats = LN_BINS[int(np.argmax(probs["lnlen"][i]))]
-        rows.append(Row(i, float(g.times[i]), int(k[r]), r in ln_rows, beats))
+        style = plan.sections[int(sec[i])].type if plan is not None else 1
+        rows.append(Row(i, float(g.times[i]), int(k[r]), bool(ln[r]), beats, style))
     return rows
 
 
@@ -231,11 +264,12 @@ def _snap_tail(an: SongAnalysis, head_tick: int, beats: float, rules: Rules) -> 
 
 @torch.no_grad()
 def assign_lanes(an: SongAnalysis, rows: List[Row], rules: Rules, pnet: PatternNet, stars: float,
-                 rng: np.random.Generator, temperature: float = 0.75) -> List[Note]:
+                 rng: np.random.Generator, temperature: float = 0.75, archetype: int = 0) -> List[Note]:
     st = RowState.fresh()
     notes: List[Note] = []
     release_gap = lambda bm: max(60.0, bm / 4.0)         # noqa: E731 - free time after an LN tail
-    for row in rows:
+    ln_type = TYPES.index("ln")
+    for ri, row in enumerate(rows):
         bm = float(an.grid.beat_ms[row.tick])
         # a lane is busy until its LN tail plus a short release gap
         busy = st.held_until + release_gap(bm)
@@ -249,8 +283,8 @@ def assign_lanes(an: SongAnalysis, rows: List[Row], rules: Rules, pnet: PatternN
         st.held_until = saved
         if not ok.any():
             continue
-        x = torch.from_numpy(row_features(st, row.time, k, row.ln, bm, stars))[None]
-        logits = pnet(x)[0].numpy().astype(np.float64)
+        x = torch.from_numpy(row_features(st, row.time, k, row.ln, bm, stars, row.style, archetype))[None]
+        logits = pnet(x)[0].numpy().astype(np.float64) + style_bias(st, row.style, row.time, bm)
         logits[~ok] = -np.inf
         p = np.exp((logits - logits[ok].max()) / temperature)
         p /= p.sum()
@@ -259,7 +293,13 @@ def assign_lanes(an: SongAnalysis, rows: List[Row], rules: Rules, pnet: PatternN
         if row.ln:
             lanes = lanes_of(mask)
             ln_lanes = lanes if (len(lanes) == 1 or rng.random() < 0.35) else [lanes[int(rng.integers(len(lanes)))]]
-            tail = _snap_tail(an, row.tick, row.ln_beats, rules)
+            if row.style == ln_type:
+                # LN sections: holds run through the flow, released on the row after next
+                nxt = rows[ri + 2].time if ri + 2 < len(rows) else row.time + 2 * bm
+                beats = max(0.5, min(4.0, (nxt - row.time) / bm))
+            else:
+                beats = max(0.5, row.ln_beats)
+            tail = _snap_tail(an, row.tick, beats, rules)
             if tail is not None:
                 for l in ln_lanes:
                     ends[l] = tail
@@ -267,6 +307,38 @@ def assign_lanes(an: SongAnalysis, rows: List[Row], rules: Rules, pnet: PatternN
             notes.append(Note(row.time, l, ends[l]))
         advance(st, row.time, mask, ends)
     return notes
+
+
+_STYLE_IDX = {name: i for i, name in enumerate(TYPES)}
+
+
+def style_bias(st: RowState, style: int, t: float, beat_ms: float, strength: float = 1.5) -> np.ndarray:
+    """Logit bonus that makes the planned pattern type clearly recognisable: staircases for rolls,
+    ABAB for trill sections, shared lanes for jacks/chordjacks, no shared lanes for streams."""
+    b = np.zeros(16)
+    hist = st.history
+    if not hist:
+        return b
+    prev = hist[-1][0]
+    name = TYPES[style]
+    close = (t - st.last_time) <= beat_ms * 0.75 if st.last_time is not None else False
+    for m in range(1, 16):
+        overlap = (m & prev) != 0
+        if name in ("jack", "chordjack"):
+            b[m] += strength * (1.0 if overlap else -0.5)
+        elif name in ("stream", "jumpstream", "handstream", "roll", "trill") and close:
+            b[m] -= strength * (1.0 if overlap else 0.0)
+    if name == "trill" and len(hist) >= 2:
+        b[hist[-2][0]] += strength
+    if name == "roll" and len(hist) >= 2 and bin(prev).count("1") == bin(hist[-2][0]).count("1") == 1:
+        a, c = hist[-2][0].bit_length(), prev.bit_length()
+        nxt = c + (c - a)
+        if abs(c - a) == 1:
+            if 1 <= nxt <= 4:
+                b[1 << (nxt - 1)] += strength
+            else:                                    # turn around at the edge: 1234321...
+                b[1 << (c - (c - a) - 1)] += strength
+    return b
 
 
 # --------------------------------------------------------------------------- star rating
@@ -309,19 +381,30 @@ class ChartReport:
     rows: int
     notes: int
     holds: int
+    archetype: str = ""
+    plan: str = ""
 
 
 def generate_chart(an: SongAnalysis, name: str, target_stars: Optional[float] = None, seed: int = 0,
-                   models: Optional[Tuple[NoteNet, PatternNet]] = None, tolerance: float = 0.08
-                   ) -> Tuple[Chart, ChartReport]:
+                   models: Optional[Tuple[NoteNet, PatternNet]] = None, tolerance: float = 0.08,
+                   style: str = "auto", archetype: Optional[int] = None) -> Tuple[Chart, ChartReport]:
+    """One difficulty. ``style`` picks the chart archetype (auto | stream | speed | jack | ln | hybrid);
+    the section plan (one pattern type and density per music section) follows it."""
+    from .planner import choose_archetype, make_plan
+    from .style import analysis_descriptors
+
     target = float(target_stars if target_stars is not None else DIFFICULTIES[name])
     rules = rules_for(target)
     nnet, pnet = models or load_models()
     probs = note_probabilities(an, nnet, target)
+    if archetype is None:
+        archetype = choose_archetype(target, style, descriptors=analysis_descriptors(an, target))
+    plan = make_plan(an.sections, archetype, np.random.default_rng(seed + 7919)) if an.sections else None
 
     def build(theta: float, boost: float) -> Tuple[Chart, float]:
-        rows = select_rows(an, probs, rules, theta, boost)
-        notes = assign_lanes(an, rows, rules, pnet, target, np.random.default_rng(seed))
+        rows = select_rows(an, probs, rules, theta, boost, plan)
+        notes = assign_lanes(an, rows, rules, pnet, target, np.random.default_rng(seed),
+                             archetype=archetype)
         chart = Chart(notes, list(an.timing.red_lines), rules.od, rules.hp, name)
         return chart, (star_rating(chart_to_osu_text(chart)) if notes else 0.0)
 
@@ -344,7 +427,8 @@ def generate_chart(an: SongAnalysis, name: str, target_stars: Optional[float] = 
             break
     theta, chart, sr = best
     holds = sum(n.is_hold for n in chart.notes)
-    return chart, ChartReport(name, target, sr, theta, len({n.time for n in chart.notes}), len(chart.notes), holds)
+    return chart, ChartReport(name, target, sr, theta, len({n.time for n in chart.notes}), len(chart.notes), holds,
+                              plan.archetype_name if plan else "", plan.summary() if plan else "")
 
 
 def kiai_sections(an: SongAnalysis, min_measures: int = 8) -> List[Tuple[float, float]]:
@@ -371,6 +455,16 @@ def kiai_sections(an: SongAnalysis, min_measures: int = 8) -> List[Tuple[float, 
     return out
 
 
+def normalized_sv(reds: Sequence[RedLine], end_ms: float) -> List[float]:
+    """Slider velocity per red line that cancels osu!mania's BPM-dependent scroll speed: speed is
+    relative to the beat length covering most of the map (as osu! computes it), so a red line
+    with beat length L gets SV L / L_main. 1.0 everywhere for a single BPM."""
+    from .chart import main_bpm
+
+    main = 60000.0 / main_bpm(reds, end_ms)
+    return [float(np.clip(r.beat_ms / main, 0.1, 10.0)) if abs(r.beat_ms - main) > 1e-3 else 1.0 for r in reds]
+
+
 def build_beatmap(an: SongAnalysis, chart: Chart, audio_filename: str, title: str, artist: str,
                   creator: str = "AUTO-OSU", shift_ms: float = OSU_SHIFT_MS, background: str = "",
                   kiai: Optional[Sequence[Tuple[float, float]]] = None, stars: Optional[float] = None):
@@ -378,10 +472,23 @@ def build_beatmap(an: SongAnalysis, chart: Chart, audio_filename: str, title: st
     from ..beatmap import Break, Circle, Hold, TimingPoint, Beatmap
 
     kiai = kiai_sections(an) if kiai is None else kiai
-    tps = [TimingPoint(int(round(r.time - shift_ms)), r.beat_ms, meter=r.meter) for r in chart.red_lines]
+    reds = sorted(chart.red_lines, key=lambda r: r.time)
+    tps = [TimingPoint(int(round(r.time - shift_ms)), r.beat_ms, meter=r.meter) for r in reds]
+    sv = normalized_sv(reds, max((n.end or n.time) for n in chart.notes) if chart.notes else reds[-1].time)
+
+    def sv_at(t: float) -> float:
+        return sv[max([i for i, r in enumerate(reds) if r.time <= t + 1] or [0])]
+
+    def kiai_at(t: float) -> bool:
+        return any(a <= t < b for a, b in kiai)
+
+    if len(set(sv)) > 1:                        # several BPMs: green lines keep the scroll speed constant
+        for r, v in zip(reds, sv):
+            tps.append(TimingPoint(int(round(r.time - shift_ms)), -100.0 / v, uninherited=False,
+                                   kiai=kiai_at(r.time)))
     for a, b in kiai:
-        tps.append(TimingPoint(int(round(a - shift_ms)), -100.0, uninherited=False, kiai=True))
-        tps.append(TimingPoint(int(round(b - shift_ms)), -100.0, uninherited=False, kiai=False))
+        tps.append(TimingPoint(int(round(a - shift_ms)), -100.0 / sv_at(a), uninherited=False, kiai=True))
+        tps.append(TimingPoint(int(round(b - shift_ms)), -100.0 / sv_at(b), uninherited=False, kiai=False))
     objs = []
     for n in sorted(chart.notes, key=lambda n: (n.time, n.lane)):
         x = (64, 192, 320, 448)[n.lane]
