@@ -55,9 +55,9 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--mania-engine", choices=("ranked", "rules"), default="ranked",
                    help="mania4k: ranked = exact timing + note/pattern models learned from ranked 4K charts "
                         "(default); rules = the earlier rule-based generator")
-    g.add_argument("--mania-style", choices=("auto", "stream", "jack", "ln", "hybrid"), default="auto",
-                   help="mania4k ranked engine: chart style (切 stream / 叠 jack / LN / hybrid); auto picks one "
-                        "per song from the star rating and how sustained the music is")
+    g.add_argument("--mania-style", choices=("auto", "speed", "stream", "jack", "ln", "hybrid"), default="auto",
+                   help="mania4k ranked engine: chart style (乱 speed / 叠 jack / LN / 混合 hybrid; stream = "
+                        "speed); auto picks one per difficulty from the music and the star rating")
     g.add_argument("--mania-stars", type=float,
                    help="mania4k ranked engine: star rating to calibrate a single difficulty to")
     g.add_argument("--mania-model", help="dedicated trained mania 4K checkpoint (.pt)")

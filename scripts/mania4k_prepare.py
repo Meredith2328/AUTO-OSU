@@ -40,8 +40,14 @@ def chart_shift(env, heads_ms: np.ndarray) -> float:
     return best if 14.0 <= best <= 46.0 else DEFAULT_SHIFT
 
 
+FORCE_SPLIT = ""
+
+
 def prepare_set(args) -> str:
-    d, out = args
+    d, out = args[0], args[1]
+    if len(args) > 2 and args[2]:
+        global FORCE_SPLIT
+        FORCE_SPLIT = args[2]
     target = out / f"{d.name}.npz"
     if target.exists():
         return f"{d.name} cached"
@@ -106,7 +112,7 @@ def prepare_set(args) -> str:
                            reds=[(r.time + shift, r.beat_ms, r.meter) for r in c.red_lines]))
     if not charts:
         return f"{d.name} no charts"
-    arrays["meta"] = np.frombuffer(json.dumps(dict(set=d.name, split=split_of(d.name), audio=meta["audio"],
+    arrays["meta"] = np.frombuffer(json.dumps(dict(set=d.name, split=FORCE_SPLIT or split_of(d.name), audio=meta["audio"],
                                                    title=meta["title"], artist=meta["artist"],
                                                    charts=charts)).encode(), np.uint8)
     tmp = target.with_suffix(".tmp.npz")
@@ -120,12 +126,13 @@ def main() -> None:
     ap.add_argument("--corpus", default=os.environ.get("MANIA4K_CORPUS", str(Path.home() / "data" / "mania4k")))
     ap.add_argument("--out", default=os.environ.get("MANIA4K_PREPARED", str(Path.home() / "data" / "prepared")))
     ap.add_argument("--workers", type=int, default=2)
+    ap.add_argument("--split", default="", help="label every set with this split (e.g. a fresh holdout)")
     args = ap.parse_args()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     dirs = [d for d in sorted(Path(args.corpus).iterdir()) if (d / "meta.json").exists()]
     with Pool(args.workers) as pool:
-        for msg in pool.imap_unordered(prepare_set, [(d, out) for d in dirs]):
+        for msg in pool.imap_unordered(prepare_set, [(d, out, args.split) for d in dirs]):
             print(msg, flush=True)
 
 

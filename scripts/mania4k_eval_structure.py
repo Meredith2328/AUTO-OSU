@@ -5,7 +5,7 @@ for (same song, same star rating). Per chart, on 1-measure windows:
 
 * pattern types (stream, trill, roll, jumpstream, handstream, jack, chordjack, ln, mixed, light)
   -> share of the most common type (monotony) and type entropy;
-* results are reported per archetype of the ranked chart (切 / 叠 / LN / hybrid): human charts of
+* results are reported per archetype of the ranked chart (乱 / 叠 / LN / 混合): human charts of
   different archetypes have very different distributions and must not be pooled;
 * music sections (self-similarity novelty of measure spectra) -> dominant-type share inside a
   section (purity), and at section boundaries the change in density |dlog nps| and in type;
@@ -109,7 +109,7 @@ def main() -> None:
     keys = ("top_type", "entropy", "family_top", "purity", "boundary_dnps", "boundary_type_change",
             "corr_loud", "corr_high", "range")
     groups = [("all", rows)] + [(a, [r for r in rows if r["ref"]["archetype"] == a])
-                                for a in ("切", "叠", "LN", "hybrid")]
+                                for a in ("乱", "叠", "LN", "混合")]
     for name, rs in groups:
         if not rs:
             continue

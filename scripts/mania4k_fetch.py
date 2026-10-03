@@ -95,11 +95,14 @@ def main() -> None:
     ap.add_argument("--sets", type=int, default=400)
     ap.add_argument("--sort", default="ranked_date:desc")
     ap.add_argument("--max-length", type=int, default=330, help="skip sets longer than this (s)")
+    ap.add_argument("--exclude", default="", help="corpus folder whose sets must not be fetched again")
     args = ap.parse_args()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     have = sum((p / "meta.json").exists() for p in out.iterdir() if p.is_dir())
     offset, seen = 0, set()
+    if args.exclude:
+        seen |= {int(p.name) for p in Path(args.exclude).iterdir() if p.name.isdigit()}
     while have < args.sets:
         page = search(offset, sort=args.sort)
         if not page:

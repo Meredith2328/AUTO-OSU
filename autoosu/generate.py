@@ -190,24 +190,19 @@ def _generate_mania4k(audio_path, difficulties: List[str], out_dir, seed: int, t
         background = extract_video_frame(audio_path, workdir / "bg.jpg")
     log("[4/4] generating difficulties")
     models = load_models()
-    from .mania4k.generate import note_probabilities
     from .mania4k.planner import choose_archetype
     from .mania4k.structure import ARCHETYPES
+    from .mania4k.style import analysis_descriptors
 
-    STYLE_LABEL = {"切": "stream", "叠": "jack", "LN": "LN", "hybrid": "hybrid"}
-
-    # one chart style (archetype) for the whole set, decided at Hard level; 叠 is not used below 2*
-    probs = note_probabilities(an, models[0], DIFFICULTIES["Hard"])
-    p_note = 1.0 - probs["count"][:, 0]
-    top = p_note >= np.percentile(p_note, 90)
-    set_arch = choose_archetype(DIFFICULTIES["Hard"], style, float(probs["ln"][top].mean()) if top.any() else 0.0)
-    log(f"      chart style: {ARCHETYPES[set_arch]}" + (" (auto)" if style == "auto" else ""))
+    STYLE_LABEL = {"乱": "speed", "叠": "jack", "LN": "LN", "混合": "hybrid"}
     diffs: List[DiffResult] = []
     prev_stars: Optional[float] = None
     for i, name in enumerate(sorted(names, key=lambda n: DIFFICULTIES[n])):
         report(0.35 + 0.6 * i / len(names), f"{name}: notes")
         target = star_rating if (star_rating is not None and len(names) == 1) else DIFFICULTIES[name]
-        arch = set_arch if not (target < 2.0 and ARCHETYPES[set_arch] == "叠") else ARCHETYPES.index("切")
+        # chart style per difficulty, like ranked sets (70 % of them mix styles across difficulties):
+        # the requested one, or what mappers chose for such music at this star rating
+        arch = choose_archetype(target, style, descriptors=analysis_descriptors(an, target))
         chart, rep = generate_chart(an, name, target, seed=seed * 1000 + i, models=models, archetype=arch)
         if (prev_stars is not None and target - rep.stars > 0.5 and rep.stars - prev_stars < 0.4):
             log(f"      {name:<7} skipped: the song only supports {rep.stars:.2f}* without overmapping "
@@ -225,7 +220,7 @@ def _generate_mania4k(audio_path, difficulties: List[str], out_dir, seed: int, t
         res = DiffResult(preset, [], bm)
         diffs.append(res)
         s = res.summary()
-        log(f"      {name:<7} {rep.stars:4.2f}* (target {target:.2f})  {s['objects']:4d} notes "
+        log(f"      {name:<7} {STYLE_LABEL[ARCHETYPES[arch]]:<6} {rep.stars:4.2f}* (target {target:.2f})  {s['objects']:4d} notes "
             f"({s['circles']} taps, {s['holds']} holds) {s['nps']:.2f} notes/s  OD {chart.od:g} HP {chart.hp:g}  verified")
         log(f"              sections: {rep.plan}")
     if not diffs:

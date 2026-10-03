@@ -1,7 +1,7 @@
 """Section planner: what each part of the song should feel like, learned from ranked charts.
 
-Human 4K charts first commit to an overall style (archetype: 切 stream-, 叠 jack-, LN-dominant or
-hybrid), then give each musical section one main pattern type and a density that follows the
+Human 4K charts first commit to an overall style (archetype: 乱 speed-, 叠 jack-, LN-dominant or
+混合 hybrid), then give each musical section one main pattern type and a density that follows the
 section's energy (rest sections ~45-60 % sparser than the chart, climaxes slightly denser and with
 the harder subtypes: jumpstream over stream, more chordjack, more LN). The type usually changes
 when the music changes section. All of these statistics are fitted per archetype by
@@ -26,9 +26,9 @@ from .structure import ARCHETYPES, TYPES, measure_windows, measure_features, nov
 PLAN_FILE = Path(__file__).resolve().parent / "weights" / "plan.json"
 # share of long sections that mix in a second type; human in-section purity is 0.81 for LN charts
 # and 0.62-0.67 for the other archetypes
-SECONDARY_RATE = {"切": 0.5, "叠": 0.5, "LN": 0.15, "hybrid": 0.55}
-STYLE_NAMES = {"auto": None, "stream": "切", "jack": "叠", "ln": "LN", "hybrid": "hybrid",
-               "切": "切", "叠": "叠", "LN": "LN"}
+SECONDARY_RATE = {"乱": 0.5, "叠": 0.5, "LN": 0.15, "混合": 0.55}
+STYLE_NAMES = {"auto": None, "speed": "乱", "stream": "乱", "jack": "叠", "ln": "LN", "hybrid": "混合",
+               "乱": "乱", "叠": "叠", "LN": "LN", "混合": "混合"}
 
 
 @lru_cache(maxsize=1)
@@ -78,12 +78,20 @@ def music_sections(mel: np.ndarray, env, reds: Sequence[RedLine], start_ms: floa
     return out
 
 
-def choose_archetype(stars: float, style: str = "auto", ln_propensity: float = 0.0) -> int:
-    """Requested style, or the most likely archetype for the star rating, nudged towards LN when the
-    note model hears many sustained sounds. Below 2 stars jack-heavy charts are not used."""
+def choose_archetype(stars: float, style: str = "auto", ln_propensity: float = 0.0,
+                     descriptors: Optional[np.ndarray] = None) -> int:
+    """Requested style; or, with song descriptors (style.analysis_descriptors), the archetype ranked
+    mappers most likely chose for such music at this star rating (style.json); or, without them, the
+    most likely archetype for the star rating nudged towards LN when the note model hears many
+    sustained sounds. Below 2 stars jack-heavy charts are not used."""
+    from .style import archetype_probs
+
     name = STYLE_NAMES.get(style, None)
+    p_music = archetype_probs(descriptors) if (not name and descriptors is not None) else None
     if name:
         a = ARCHETYPES.index(name)
+    elif p_music is not None:
+        a = int(np.argmax(p_music))
     else:
         plan = load_plan()
         bands = plan["star_bands"]
@@ -92,7 +100,7 @@ def choose_archetype(stars: float, style: str = "auto", ln_propensity: float = 0
         p[ARCHETYPES.index("LN")] *= 0.5 + 2.0 * ln_propensity
         a = int(np.argmax(p))
     if stars < 2.0 and ARCHETYPES[a] == "叠":
-        a = ARCHETYPES.index("切")
+        a = ARCHETYPES.index("乱")
     return a
 
 

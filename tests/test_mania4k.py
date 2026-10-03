@@ -181,8 +181,8 @@ def test_archetype_and_plan_follow_the_tables():
 
     assert chart_archetype(["ln"] * 6 + ["stream"] * 2) == "LN"
     assert chart_archetype(["chordjack"] * 4 + ["jumpstream"] * 6) == "叠"
-    assert chart_archetype(["stream"] * 5 + ["jumpstream"] * 4 + ["mixed"]) == "切"
-    assert ARCHETYPES[choose_archetype(1.5, "jack")] == "切"       # no jack charts below 2 stars
+    assert chart_archetype(["stream"] * 5 + ["jumpstream"] * 4 + ["mixed"]) == "乱"
+    assert ARCHETYPES[choose_archetype(1.5, "jack")] == "乱"       # no jack charts below 2 stars
     assert ARCHETYPES[choose_archetype(4.0, "ln")] == "LN"
     secs = [Section(i * 8000.0, (i + 1) * 8000.0, 8, e, lv) for i, (e, lv) in
             enumerate([(-1.5, 0), (0.0, 2), (1.5, 3), (-0.5, 1)] * 3)]
@@ -193,3 +193,37 @@ def test_archetype_and_plan_follow_the_tables():
     peak = [s.density for s in plan.sections if s.level == 3]
     assert max(rest) < min(peak)                                  # quiet sections sparser than climaxes
     assert all(TYPES[s.type] != "light" for s in plan.sections if s.level >= 2)
+
+
+def test_pattern_families_use_community_terms():
+    from autoosu.mania4k.structure import ARCHETYPES, FAMILY
+
+    assert FAMILY["stream"] == FAMILY["jumpstream"] == FAMILY["handstream"] == "乱"     # 乱 = speed
+    assert FAMILY["trill"] == "切"
+    assert FAMILY["jack"] == FAMILY["chordjack"] == "叠"
+    assert FAMILY["mixed"] == "混合"                                                    # 混合 = mixed
+    assert ARCHETYPES == ("乱", "叠", "LN", "混合")
+
+
+def test_style_model_reads_the_music():
+    from autoosu.mania4k.planner import choose_archetype
+    from autoosu.mania4k.style import DESCRIPTORS, archetype_probs, song_descriptors
+
+    rng = np.random.default_rng(0)
+    mel = rng.integers(0, 255, size=(4000, 64)).astype(np.uint8)
+    env = [rng.random(16000).astype(np.float32) for _ in range(4)]
+    x = song_descriptors(mel, *env, 344.5, 170.0, 3.2)
+    assert x.shape == (len(DESCRIPTORS),) and np.isfinite(x).all()
+    p = archetype_probs(x)
+    assert p is not None and abs(p.sum() - 1) < 1e-9
+    assert choose_archetype(3.2, "auto", descriptors=x) == int(np.argmax(p))
+    assert choose_archetype(3.2, "ln", descriptors=x) == 2                          # a request wins
+
+
+def test_bpm_changes_get_normalized_scroll_speed():
+    from autoosu.mania4k.generate import normalized_sv
+
+    reds = [RedLine(0.0, 500.0, 4), RedLine(60000.0, 400.0, 4), RedLine(70000.0, 500.0, 4)]
+    sv = normalized_sv(reds, 120000.0)
+    assert sv[0] == sv[2] == 1.0 and abs(sv[1] - 0.8) < 1e-9          # 150 BPM part scrolls at 120 BPM speed
+    assert normalized_sv(reds[:1], 120000.0) == [1.0]

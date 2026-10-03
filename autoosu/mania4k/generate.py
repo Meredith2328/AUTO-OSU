@@ -21,7 +21,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import torch
 
-from .chart import KEYS, Chart, Note
+from .chart import KEYS, Chart, Note, RedLine
 from .structure import TYPES
 from .features import DIV_CLASSES, POS_DIV, Grid, SongFeatures, build_grid, env_matrix, local_loudness, mel_index, song_features
 from .model import LN_BINS, NoteNet
@@ -388,18 +388,17 @@ class ChartReport:
 def generate_chart(an: SongAnalysis, name: str, target_stars: Optional[float] = None, seed: int = 0,
                    models: Optional[Tuple[NoteNet, PatternNet]] = None, tolerance: float = 0.08,
                    style: str = "auto", archetype: Optional[int] = None) -> Tuple[Chart, ChartReport]:
-    """One difficulty. ``style`` picks the chart archetype (auto | stream | jack | ln | hybrid);
+    """One difficulty. ``style`` picks the chart archetype (auto | speed | jack | ln | hybrid);
     the section plan (one pattern type and density per music section) follows it."""
     from .planner import choose_archetype, make_plan
+    from .style import analysis_descriptors
 
     target = float(target_stars if target_stars is not None else DIFFICULTIES[name])
     rules = rules_for(target)
     nnet, pnet = models or load_models()
     probs = note_probabilities(an, nnet, target)
     if archetype is None:
-        p_note = 1.0 - probs["count"][:, 0]
-        top = p_note >= np.percentile(p_note, 90)
-        archetype = choose_archetype(target, style, float(probs["ln"][top].mean()) if top.any() else 0.0)
+        archetype = choose_archetype(target, style, descriptors=analysis_descriptors(an, target))
     plan = make_plan(an.sections, archetype, np.random.default_rng(seed + 7919)) if an.sections else None
 
     def build(theta: float, boost: float) -> Tuple[Chart, float]:
@@ -456,6 +455,18 @@ def kiai_sections(an: SongAnalysis, min_measures: int = 8) -> List[Tuple[float, 
     return out
 
 
+def normalized_sv(reds: Sequence[RedLine], end_ms: float) -> List[float]:
+    """Slider velocity per red line that cancels osu!mania's BPM-dependent scroll speed: speed is
+    relative to the beat length covering most of the map (as osu! computes it), so a red line
+    with beat length L gets SV L / L_main. 1.0 everywhere for a single BPM."""
+    dur: Dict[float, float] = {}
+    for i, r in enumerate(reds):
+        nxt = reds[i + 1].time if i + 1 < len(reds) else max(end_ms, r.time)
+        dur[round(r.beat_ms, 3)] = dur.get(round(r.beat_ms, 3), 0.0) + max(0.0, nxt - r.time)
+    main = max(dur, key=dur.get) if dur else 1.0
+    return [float(np.clip(r.beat_ms / main, 0.1, 10.0)) if abs(r.beat_ms - main) > 1e-3 else 1.0 for r in reds]
+
+
 def build_beatmap(an: SongAnalysis, chart: Chart, audio_filename: str, title: str, artist: str,
                   creator: str = "AUTO-OSU", shift_ms: float = OSU_SHIFT_MS, background: str = "",
                   kiai: Optional[Sequence[Tuple[float, float]]] = None, stars: Optional[float] = None):
@@ -463,10 +474,23 @@ def build_beatmap(an: SongAnalysis, chart: Chart, audio_filename: str, title: st
     from ..beatmap import Break, Circle, Hold, TimingPoint, Beatmap
 
     kiai = kiai_sections(an) if kiai is None else kiai
-    tps = [TimingPoint(int(round(r.time - shift_ms)), r.beat_ms, meter=r.meter) for r in chart.red_lines]
+    reds = sorted(chart.red_lines, key=lambda r: r.time)
+    tps = [TimingPoint(int(round(r.time - shift_ms)), r.beat_ms, meter=r.meter) for r in reds]
+    sv = normalized_sv(reds, max((n.end or n.time) for n in chart.notes) if chart.notes else reds[-1].time)
+
+    def sv_at(t: float) -> float:
+        return sv[max([i for i, r in enumerate(reds) if r.time <= t + 1] or [0])]
+
+    def kiai_at(t: float) -> bool:
+        return any(a <= t < b for a, b in kiai)
+
+    if len(set(sv)) > 1:                        # several BPMs: green lines keep the scroll speed constant
+        for r, v in zip(reds, sv):
+            tps.append(TimingPoint(int(round(r.time - shift_ms)), -100.0 / v, uninherited=False,
+                                   kiai=kiai_at(r.time)))
     for a, b in kiai:
-        tps.append(TimingPoint(int(round(a - shift_ms)), -100.0, uninherited=False, kiai=True))
-        tps.append(TimingPoint(int(round(b - shift_ms)), -100.0, uninherited=False, kiai=False))
+        tps.append(TimingPoint(int(round(a - shift_ms)), -100.0 / sv_at(a), uninherited=False, kiai=True))
+        tps.append(TimingPoint(int(round(b - shift_ms)), -100.0 / sv_at(b), uninherited=False, kiai=False))
     objs = []
     for n in sorted(chart.notes, key=lambda n: (n.time, n.lane)):
         x = (64, 192, 320, 448)[n.lane]

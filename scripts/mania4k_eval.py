@@ -135,7 +135,7 @@ def main() -> None:
     ap.add_argument("--shard", default="0/1", help="i/n: evaluate every n-th test song starting at i")
     ap.add_argument("--save-dir", default="", help="write generated charts as JSON (audio time) for analysis")
     ap.add_argument("--match-archetype", action="store_true",
-                    help="generate each chart in the archetype (stream/jack/LN/hybrid) of its ranked chart")
+                    help="generate each chart in the archetype (speed/jack/LN/hybrid) of its ranked chart")
     args = ap.parse_args()
     si, sn = (int(x) for x in args.shard.split("/"))
     models = None if args.baseline else load_models()

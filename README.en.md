@@ -12,7 +12,7 @@ This repository is a fork of [kanze1/AUTO-OSU](https://github.com/kanze1/AUTO-OS
 pip install -e .                       # Python 3.10+, CPU is fine
 python -m autoosu song.mp3 --mode mania4k -d Easy Normal Hard Insane Expert -o out
 python -m autoosu song.mp3 --mode mania4k -d Hard --mania-stars 3.5     # a specific star rating
-python -m autoosu song.mp3 --mode mania4k --mania-style jack             # chart style: auto/stream/jack/ln/hybrid
+python -m autoosu song.mp3 --mode mania4k --mania-style jack             # chart style: auto/speed/jack/ln/hybrid
 python -m autoosu                       # GUI; pick "osu!mania 4K" as the game mode
 ```
 
@@ -40,8 +40,8 @@ The result is an `.osz` that osu!/lazer imports on double-click. The first run d
 
 ## Iterations
 
-- **v1**: exact timing, sync as a hard constraint, star calibration. Human review 70/100: sync and difficulty right, but patterns monotonous (almost all streams), weak sections, no emotional arc.
-- **v2**: pick a chart style first (stream / jack / LN / hybrid, `--mania-style`, auto by star rating and music), cut the song into music sections rated by energy, and plan one main pattern type (optionally a second) and a density per section from the distributions of ranked charts of the same style; the pattern model is conditioned on the section type. Against human charts of the same style: stream charts jumpstream/stream/roll 38/24/14 % (human 40/23/13 %), jack charts chordjack 32 % (35 %), LN charts LN 80 % (77 %); sync, star and playability constraints unchanged. See [docs/mania4k_engine.md](docs/mania4k_engine.md#v2-archetypes-sections-and-intensity).
+- **v1**: exact timing, sync as a hard constraint, star calibration. Human review 70/100: sync and difficulty right, but patterns monotonous (almost all speed), weak sections, no emotional arc.
+- **v2**: pick a chart style first (speed / jack / LN / hybrid, `--mania-style`, auto by star rating and music), cut the song into music sections rated by energy, and plan one main pattern type (optionally a second) and a density per section from the distributions of ranked charts of the same style; the pattern model is conditioned on the section type. Against human charts of the same style: speed charts jumpstream/stream/roll 38/24/14 % (human 40/23/13 %), jack charts chordjack 32 % (35 %), LN charts LN 80 % (77 %); sync, star and playability constraints unchanged. See [docs/mania4k_engine.md](docs/mania4k_engine.md#v2-archetypes-sections-and-intensity).
 
 Known limits: live recordings with drifting tempo, swing/jazz and tournament tracks with many tempo changes; no SV or keysounds.
 

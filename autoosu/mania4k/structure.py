@@ -4,12 +4,16 @@ Vocabulary (4K community terms):
 
 * 叠 / jack family - ``jack``: single notes repeating a lane; ``chordjack``: chords sharing lanes
   with the previous row.
-* 切 / stream family - ``stream``: single notes alternating lanes; ``trill``: two lane groups
-  alternating (ABAB); ``roll``: stairs (1234 / 4321); ``jumpstream``: streams with two-note chords;
-  ``handstream``: streams with three-note chords.
+* 乱 / speed family - ``stream``: single notes running over the lanes; ``roll``: stairs
+  (1234 / 4321); ``jumpstream``: streams with two-note chords; ``handstream``: streams with
+  three-note chords.
+* 切 - ``trill``: two lane groups alternating (ABAB, incl. jumptrills / splits).
 * ``ln``: long-note sections.
 * ``light``: sparse windows (rests, intros), where the type does not matter.
-* 乱 / ``mixed``: none of the above dominates (tech / jumbled).
+* 混合 / ``mixed``: none of the above dominates (several families interleaved).
+
+Chart archetypes (the chart's overall style): 乱 (speed: the 乱/切 families dominate), 叠 (jack),
+LN, 混合 (hybrid).
 """
 from __future__ import annotations
 
@@ -19,8 +23,8 @@ from typing import Dict, List, Sequence, Tuple
 import numpy as np
 
 TYPES = ("light", "stream", "trill", "roll", "jumpstream", "handstream", "jack", "chordjack", "ln", "mixed")
-FAMILY = {"light": "light", "stream": "切", "trill": "切", "roll": "切", "jumpstream": "切", "handstream": "切",
-          "jack": "叠", "chordjack": "叠", "ln": "LN", "mixed": "乱"}
+FAMILY = {"light": "light", "stream": "乱", "trill": "切", "roll": "乱", "jumpstream": "乱", "handstream": "乱",
+          "jack": "叠", "chordjack": "叠", "ln": "LN", "mixed": "混合"}
 
 
 def rows_of(notes) -> List[Tuple[float, int, float]]:
@@ -191,19 +195,19 @@ def section_bounds(nov: np.ndarray, min_len: int = 4, phrase: int = 4) -> List[i
     return [0] + sorted(chosen)
 
 
-ARCHETYPES = ("切", "叠", "LN", "hybrid")
+ARCHETYPES = ("乱", "叠", "LN", "混合")
 
 
 def chart_archetype(types: Sequence[str]) -> str:
-    """Chart-level style from its window types: LN-, 叠 (jack)-, 切 (stream)-dominant or hybrid."""
+    """Chart-level style from its window types: LN-, 叠 (jack)-, 乱 (speed)-dominant or 混合 (hybrid)."""
     act = [t for t in types if t != "light"]
     if not act:
-        return "切"
-    fam = {k: sum(FAMILY[t] == k for t in act) / len(act) for k in ("切", "叠", "LN", "乱")}
+        return "乱"
+    fam = {k: sum(FAMILY[t] == k for t in act) / len(act) for k in ("乱", "切", "叠", "LN", "混合")}
     if fam["LN"] >= 0.5:
         return "LN"
     if fam["叠"] >= 0.3:
         return "叠"
-    if fam["切"] >= 0.6:
-        return "切"
-    return "hybrid"
+    if fam["乱"] + fam["切"] >= 0.6:
+        return "乱"
+    return "混合"
