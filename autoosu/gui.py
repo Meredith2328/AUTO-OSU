@@ -220,6 +220,7 @@ def create_app():
             if hasattr(self, "_quality_labels"):
                 self.quality_var.set(next((k for k, v in self._quality_labels.items() if v == w["adv.quality.menu"].get()), "normal"))
                 self.engine_var.set(next((k for k, v in self._engine_labels.items() if v == w["adv.engine.menu"].get()), "ml"))
+                self.map_mode_var.set(next((k for k, v in self._mode_labels.items() if v == w["mode.menu"].get()), "standard"))
             self.title(f"AUTO-OSU {__version__} · {AUTHOR}")
             self.header.set_texts(tr("app.title"), tr("app.subtitle"))
             self.header.lang_btn.configure(text=tr("lang.toggle"))
@@ -228,7 +229,7 @@ def create_app():
                         "out.browse", "out.open_osu", "adv.seed", "adv.bpm", "adv.offset",
                         "adv.creator", "adv.star", "adv.quality", "adv.device", "adv.engine", "adv.preview",
                         "models.download", "run.open_osz", "run.open_folder", "about", "input.recursive",
-                        "input.queue", "batch.output_hint", "device.refresh", "batch.cancel",
+                        "input.queue", "batch.output_hint", "device.refresh", "batch.cancel", "mode.section",
                         "runtime.install", "runtime.hint", "runtime.cancel"):
                 w[key].configure(text=tr(key))
             for name in PRESETS:
@@ -240,12 +241,44 @@ def create_app():
             self._engine_labels = {"ml": tr("adv.engine.ml"), "rules": tr("adv.engine.rules")}
             w["adv.engine.menu"].configure(values=list(self._engine_labels.values()))
             w["adv.engine.menu"].set(self._engine_labels.get(self.engine_var.get(), self._engine_labels["ml"]))
+            self._mode_labels = {"standard": tr("mode.standard"), "mania4k": tr("mode.mania4k")}
+            w["mode.menu"].configure(values=list(self._mode_labels.values()))
+            w["mode.menu"].set(self._mode_labels.get(self.map_mode_var.get(), self._mode_labels["standard"]))
             if not self.busy:
                 w["status"].configure(text=tr("status.idle"))
             self.refresh_models()
             self.update_input_mode()
             self.render_queue()
             self.refresh_cuda_text()
+            self.update_game_mode()
+
+        def change_game_mode(self, value: str) -> None:
+            self.map_mode_var.set(next((k for k, v in self._mode_labels.items() if v == value), "standard"))
+            self.update_game_mode()
+            if self.map_mode_var.get() == "standard" and self.cuda_status is None:
+                self.after_idle(self.check_cuda)
+
+        def update_game_mode(self) -> None:
+            """mania uses the dedicated rules engine; never expose standard checkpoints as compatible."""
+            mania = self.map_mode_var.get() == "mania4k"
+            if mania:
+                self.engine_var.set("rules")
+                self.widgets["adv.engine.menu"].set(self._engine_labels["rules"])
+            if not self.busy:
+                self.widgets["adv.engine.menu"].configure(state="disabled" if mania else "normal")
+                self.widgets["adv.quality.menu"].configure(state="disabled" if mania else "normal")
+                self.widgets["adv.device.menu"].configure(state="disabled" if mania else "normal")
+                self.widgets["adv.star.entry"].configure(state="disabled" if mania else "normal")
+            # The rules generator is CPU-only and imports no PyTorch. Do not show
+            # standard-mode GPU setup as if it were relevant to mania.
+            runtime_keys = ("device.frame", "adv.device.menu", "device.status",
+                            "runtime.install", "runtime.hint", "runtime.cancel")
+            for key in runtime_keys:
+                if mania:
+                    self.widgets[key].grid_remove()
+                elif key != "runtime.cancel" or self.runtime_installing:
+                    self.widgets[key].grid()
+            self.refresh_models()
 
         # ------------------------------------------------------------------ animations
         def _fade_in(self) -> None:
@@ -413,7 +446,7 @@ def create_app():
                 self.queue_box.see(f"{self.current_index}.0")
 
         def check_cuda(self) -> None:
-            if self.cuda_checking or self.busy:
+            if self.map_mode_var.get() == "mania4k" or self.cuda_checking or self.busy:
                 return
             self.cuda_checking = True
             self.widgets["device.refresh"].configure(state="disabled")
@@ -488,6 +521,10 @@ def create_app():
 
         def refresh_models(self) -> None:
             w = self.widgets
+            if self.map_mode_var.get() == "mania4k":
+                w["models.status"].configure(text=tr("models.mania_rules"), text_color=PALETTE["text"])
+                w["models.download"].grid_remove()
+                return
             found = self.models_present()
             if all(found.values()):
                 w["models.status"].configure(text=tr("models.ok", rhythm=found["rhythm"].name, coord=found["coord"].name),
@@ -523,7 +560,7 @@ def create_app():
         def set_busy(self, busy: bool) -> None:
             self.busy = busy
             state = "disabled" if busy else "normal"
-            for key in ("run.generate", "models.download", "song.entry", "song.browse", "input.mode", "input.recursive",
+            for key in ("run.generate", "models.download", "song.entry", "song.browse", "input.mode", "input.recursive", "mode.menu",
                         "out.entry", "out.browse", "out.open_osu", "adv.device.menu", "adv.quality.menu", "adv.engine.menu", "adv.preview", "runtime.install"):
                 self.widgets[key].configure(state=state)
             for name in PRESETS:
@@ -536,12 +573,17 @@ def create_app():
                 self.widgets["runtime.install"].configure(state="disabled")
             self.widgets["batch.cancel"].configure(text=tr("batch.cancel"))
             self.update_input_mode()
+            if not busy:
+                self.update_game_mode()
             if self.runtime_installing:
                 self.widgets["run.generate"].configure(text=tr("runtime.install"))
 
         def collect_settings(self) -> Dict:
             quality = next((k for k, v in self._quality_labels.items() if v == self.widgets["adv.quality.menu"].get()), "normal")
+            map_mode = next((k for k, v in self._mode_labels.items() if v == self.widgets["mode.menu"].get()), "standard")
             engine = next((k for k, v in self._engine_labels.items() if v == self.widgets["adv.engine.menu"].get()), "ml")
+            if map_mode == "mania4k":
+                engine = "rules"
             self.quality_var.set(quality)
             self.engine_var.set(engine)
             return {
@@ -551,7 +593,7 @@ def create_app():
                 "offset": self.offset_var.get(), "creator": self.creator_var.get(), "star": self.star_var.get(),
                 "quality": quality, "device": self.device_var.get(), "engine": engine,
                 "preview": self.preview_var.get(), "advanced_open": self.advanced_open, "geometry": self.geometry(),
-                "source_mode": self.source_mode.get(), "recursive": self.recursive_var.get(),
+                "source_mode": self.source_mode.get(), "recursive": self.recursive_var.get(), "map_mode": map_mode,
             }
 
         def start(self) -> None:
@@ -569,7 +611,7 @@ def create_app():
             if not s["difficulties"]:
                 return self.show_error(tr("err.no_diff"))
             found = self.models_present()
-            if s["engine"] == "ml" and not all(found.values()):
+            if s["map_mode"] == "standard" and s["engine"] == "ml" and not all(found.values()):
                 return self.show_error(tr("err.no_models"))
 
             def num(v: str):
@@ -604,6 +646,7 @@ def create_app():
                 coord_steps=QUALITY_STEPS[s["quality"]], device=s["device"],
                 rhythm_model=str(found["rhythm"]) if s["engine"] == "ml" else None,
                 coord_model=str(found["coord"]) if s["engine"] == "ml" else None,
+                mode=s["map_mode"],
             )
             threading.Thread(target=self.work, args=(song, s["difficulties"], self.last_output_dir, kwargs, s["preview"], s["recursive"]),
                              daemon=True).start()
@@ -754,7 +797,9 @@ def create_app():
                             text=tr("status.done", file=self.last_osz.name, secs=res["elapsed_s"], device=res["device"]))
                         self.log(tr("result.summary", bpm=res["bpm"], n=len(res["diffs"])))
                         for s in res["diffs"]:
-                            self.log(tr("result.diff", name=s["name"], objects=s["objects"], sliders=s["sliders"], nps=s["nps"]))
+                            key = "result.diff.mania" if s.get("holds") is not None and self.map_mode_var.get() == "mania4k" else "result.diff"
+                            self.log(tr(key, name=s["name"], objects=s["objects"], sliders=s["sliders"],
+                                        holds=s.get("holds", 0), nps=s["nps"]))
                         self._flash_done()
                         if self._open_after and not self._closing:
                             open_path(self.last_osz)

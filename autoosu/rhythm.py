@@ -36,6 +36,7 @@ class RhythmEvent:
     repeats: int = 1
     new_combo: bool = False
     hitsound: int = 0
+    lane: Optional[int] = None  # 0..3 for osu!mania; unset for osu!standard
 
     @property
     def last_beat(self) -> float:

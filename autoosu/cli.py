@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import sys
 from pathlib import Path
@@ -11,9 +12,17 @@ from .generate import generate
 from .models import MODELS, ensure_model, find_model
 
 
+def _engine_kwargs(args) -> dict:
+    if args.mode != "mania4k":
+        return {}
+    return {"mania_engine": args.mania_engine}
+
+
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="autoosu", description="Generate an osu!standard beatmap from a song.")
+    p = argparse.ArgumentParser(prog="autoosu", description="Generate an osu! beatmap from a song.")
     p.add_argument("audio", nargs="?", help="audio/video file, or a folder for batch generation")
+    p.add_argument("--mode", choices=("standard", "mania4k"), default="standard",
+                   help="game mode (default: standard; mania4k uses the ranked-calibrated engine)")
     p.add_argument("--recursive", action="store_true", help="also scan subfolders for batch generation")
     p.add_argument("--check-cuda", action="store_true", help="check CUDA in this runtime and exit")
     p.add_argument("--setup-runtime", action="store_true", help="use uv to install and verify an app-managed GPU runtime")
@@ -43,6 +52,15 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--coord-steps", type=int, default=100, help="coordinate model: diffusion steps (fewer = faster)")
     g.add_argument("--cfg-scale", type=float, default=1.0, help="coordinate model: classifier-free guidance scale")
     g.add_argument("--star", type=float, help="star rating to condition the models on (default per difficulty)")
+    g.add_argument("--mania-engine", choices=("ranked", "rules"), default="ranked",
+                   help="mania4k: ranked = exact timing + note/pattern models learned from ranked 4K charts "
+                        "(default); rules = the earlier rule-based generator")
+    g.add_argument("--mania-stars", type=float,
+                   help="mania4k ranked engine: star rating to calibrate a single difficulty to")
+    g.add_argument("--mania-model", help="dedicated trained mania 4K checkpoint (.pt)")
+    g.add_argument("--mania-device", choices=("auto", "mps", "cpu"), default="auto")
+    g.add_argument("--mania-target-nps", type=float, help="model condition: target notes per second")
+    g.add_argument("--mania-threshold", type=float, help="model onset probability threshold (0,1]")
     p.add_argument("--debug-plot", action="store_true", help="save a PNG showing onsets, grid and chosen notes")
     p.add_argument("--preview", action="store_true",
                    help="also write an mp3 per difficulty with click sounds on every object, to check by ear")
@@ -107,12 +125,49 @@ def main(argv=None) -> int:
         from .gui import run_gui
 
         return run_gui()
+    model_flags = {"--rules", "--rhythm-model", "--coord-model", "--no-coord-model", "--download",
+                   "--device", "--temperature", "--density", "--density-bias", "--decode-steps",
+                   "--coord-steps", "--cfg-scale", "--star"}
+    supplied = sys.argv[1:] if argv is None else argv
+    mania_flags = {"--mania-model", "--mania-device", "--mania-target-nps", "--mania-threshold"}
+    engine_flags = {"--mania-engine", "--mania-stars"}
+    if args.mode != "mania4k" and any(arg.split("=", 1)[0] in mania_flags | engine_flags for arg in supplied):
+        print("error: dedicated mania model options require --mode mania4k", file=sys.stderr)
+        return 2
+    if args.mode == "mania4k" and any(arg.split("=", 1)[0] in model_flags for arg in supplied):
+        print("error: standard model/checkpoint options do not apply to mania4k",
+              file=sys.stderr)
+        return 2
+    if args.mode == "mania4k":
+        if args.mania_model and not Path(args.mania_model).is_file():
+            print(f"error: mania model file {args.mania_model} not found", file=sys.stderr)
+            return 2
+        if not args.mania_model and any(arg.split("=", 1)[0] in mania_flags - {"--mania-model"} for arg in supplied):
+            print("error: mania model options require --mania-model", file=sys.stderr)
+            return 2
+        if args.mania_target_nps is not None and (
+            not math.isfinite(args.mania_target_nps) or args.mania_target_nps <= 0
+        ):
+            print("error: --mania-target-nps must be finite and positive", file=sys.stderr)
+            return 2
+        if args.mania_stars is not None and (
+            args.mania_model or args.mania_engine != "ranked" or len(args.difficulty) != 1
+            or not math.isfinite(args.mania_stars) or not 0.5 <= args.mania_stars <= 9
+        ):
+            print("error: --mania-stars needs the ranked engine, one difficulty and a value in 0.5..9",
+                  file=sys.stderr)
+            return 2
+        if args.mania_threshold is not None and (
+            not math.isfinite(args.mania_threshold) or not 0 < args.mania_threshold <= 1
+        ):
+            print("error: --mania-threshold must be finite and in (0, 1]", file=sys.stderr)
+            return 2
     audio = Path(args.audio)
     if not audio.exists():
         print(f"error: {audio} not found", file=sys.stderr)
         return 2
-    rhythm, coord = resolve_models(args)
-    if not args.rules and args.device != "cpu" and not os.environ.get("AUTOOSU_MANAGED_WORKER"):
+    rhythm, coord = (None, None) if args.mode == "mania4k" else resolve_models(args)
+    if args.mode == "standard" and not args.rules and args.device != "cpu" and not os.environ.get("AUTOOSU_MANAGED_WORKER"):
         from .runtime import active_python, popen, probe_python
         python = active_python()
         if python and python.resolve() != Path(sys.executable).resolve():
@@ -128,7 +183,7 @@ def main(argv=None) -> int:
                     forwarded += ["--coord-model", str(Path(coord).resolve())]
                 return popen([python, "-I", "-m", "autoosu.cli", *forwarded],
                              stdout=sys.stdout, stderr=sys.stderr).wait()
-    if not args.rules:
+    if args.mode == "standard" and not args.rules:
         missing = [n for n, p in (("rhythm", rhythm), ("coord", coord)) if p is None and not (n == "coord" and args.no_coord_model)]
         if missing:
             print(f"note: no {' / '.join(missing)} model found in the models folder; add --download to fetch "
@@ -143,8 +198,11 @@ def main(argv=None) -> int:
                 debug_plot=args.debug_plot, seed=args.seed, bpm=args.bpm, offset_ms=args.offset,
                 title=args.title, artist=args.artist, creator=args.creator, osu_shift_ms=args.osu_shift,
                 rhythm_model=rhythm, temperature=args.temperature, density=args.density,
-                density_bias=args.density_bias, star_rating=args.star, decode_steps=args.decode_steps,
+                density_bias=args.density_bias, star_rating=args.mania_stars if args.mode == "mania4k" else args.star, decode_steps=args.decode_steps,
                 coord_model=coord, coord_steps=args.coord_steps, cfg_scale=args.cfg_scale, device=args.device,
+                mode=args.mode, mania_model=args.mania_model, mania_device=args.mania_device,
+                mania_target_nps=args.mania_target_nps, mania_threshold=args.mania_threshold,
+                **_engine_kwargs(args),
                 on_result=_dump_events if args.dump_events else None,
             )
         except (ValueError, OSError, RuntimeError) as exc:
@@ -157,11 +215,18 @@ def main(argv=None) -> int:
         print("error: --recursive requires a folder input", file=sys.stderr)
         return 2
 
-    res = generate(audio, args.difficulty, args.out, seed=args.seed, bpm=args.bpm, offset_ms=args.offset,
-                   title=args.title, artist=args.artist, creator=args.creator, osu_shift_ms=args.osu_shift,
-                   rhythm_model=rhythm, temperature=args.temperature, density=args.density,
-                   density_bias=args.density_bias, star_rating=args.star, decode_steps=args.decode_steps,
-                   coord_model=coord, coord_steps=args.coord_steps, cfg_scale=args.cfg_scale, device=args.device)
+    try:
+        res = generate(audio, args.difficulty, args.out, seed=args.seed, bpm=args.bpm, offset_ms=args.offset,
+                       title=args.title, artist=args.artist, creator=args.creator, osu_shift_ms=args.osu_shift,
+                       rhythm_model=rhythm, temperature=args.temperature, density=args.density,
+                       density_bias=args.density_bias, star_rating=args.mania_stars if args.mode == "mania4k" else args.star, decode_steps=args.decode_steps,
+                       coord_model=coord, coord_steps=args.coord_steps, cfg_scale=args.cfg_scale, device=args.device,
+                       mode=args.mode, mania_model=args.mania_model, mania_device=args.mania_device,
+                       mania_target_nps=args.mania_target_nps, mania_threshold=args.mania_threshold,
+                       **_engine_kwargs(args))
+    except (ValueError, OSError, RuntimeError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
 
     if args.dump_events:
         _dump_events(res)

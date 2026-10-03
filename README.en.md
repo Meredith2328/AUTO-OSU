@@ -5,7 +5,7 @@
 [![tests](https://github.com/kanze1/AUTO-OSU/actions/workflows/test.yml/badge.svg)](https://github.com/kanze1/AUTO-OSU/actions/workflows/test.yml)
 [![license](https://img.shields.io/badge/license-MIT%20%2B%20attribution-4fb8ff)](LICENSE)
 
-**Drop in a song, get a playable osu!standard beatmap a minute later.**
+**Drop in a song, get a playable osu!standard or osu!mania 4K beatmap a minute later.**
 
 [中文](README.md) · [Download](https://github.com/kanze1/AUTO-OSU/releases) · [How to use](#how-to-use) · [Quality and limits](#quality-and-limits) · [How it works](#how-it-works) · [FAQ](#faq)
 
@@ -42,6 +42,8 @@ If it helps you, a ⭐ **star** means a lot. — kanzei
 3. Drag a song onto the window, tick difficulties, click **Generate**.
 4. The `.osz` is written to the `output` folder next to the exe and, by default, opened in osu! (it imports itself). Open osu! and it is in the song list.
 
+The game mode defaults to **osu!standard**, preserving the existing behaviour. Select **osu!mania 4K (ranked-calibrated)** for a four-key map from the dedicated 4K engine: exact (multi-)red-line timing, note and lane-pattern models learned from ranked 4K charts, and difficulties calibrated with osu!'s star-rating algorithm. Every note is on the beat grid and on an audible attack, and every chart is verified before it is written. The earlier rule-based generator (`--mania-engine rules`) and `--mania-model` remain available; standard-only models are never presented as mania models.
+
 No GPU needed: a 3-minute song, one difficulty, takes about a minute on a modern CPU (70 s measured on 16 cores; 16 s on an RTX 4090).
 Windows 10 / 11, 64-bit.
 
@@ -76,6 +78,7 @@ ffmpeg ships with the program; nothing to install.
 | Area | What it does |
 | --- | --- |
 | Song | Single song / Folder batch, drag and drop or Browse, with a processing queue. |
+| Game mode | osu!standard by default, or osu!mania 4K (ranked-calibrated engine). |
 | Difficulties | Easy / Normal / Hard / Insane, any combination, all packed into one `.osz`. Default Hard + Insane. |
 | Output | Target folder; "Import into osu! when done" opens the `.osz`, same as double-clicking it. |
 | Models | Shows whether the models are present; one-click download if not (checksums verified). |
@@ -102,10 +105,17 @@ ffmpeg ships with the program; nothing to install.
 python -m autoosu --setup-runtime
 python -m autoosu --check-cuda
 python -m autoosu "D:\Music" --recursive -d Hard Insane -o "D:\Beatmaps"
+python -m autoosu "D:\Music\song.mp3" --mode mania4k -d Hard --seed 42 -o "D:\Beatmaps"
 ```
 
 | Option | Meaning |
 | --- | --- |
+| `--mode standard\|mania4k` | game mode; defaults to `standard`. `mania4k` uses the ranked-calibrated engine |
+| `--mania-engine ranked\|rules` | mania 4K engine: `ranked` (default, see [docs/mania4k_engine.md](docs/mania4k_engine.md)) or the earlier rules |
+| `--mania-stars X` | ranked engine: calibrate a single difficulty to this star rating (e.g. `-d Hard --mania-stars 3.5`) |
+| `--mania-model PATH` | generate with a locally trained dedicated mania 4K checkpoint; the GUI still uses rules |
+| `--mania-device auto\|mps\|cpu` | mania inference device; auto prefers MPS on Mac |
+| `--mania-target-nps X` / `--mania-threshold X` | optionally override the difficulty condition or validation-calibrated onset threshold |
 | `-d Easy Normal Hard Insane` | difficulties to generate |
 | `-o DIR` | output folder, default `out` |
 | `--seed N` | random seed |
@@ -128,6 +138,19 @@ python -m autoosu "D:\Music" --recursive -d Hard Insane -o "D:\Beatmaps"
 | `--debug-plot` | save an analysis image: loudness and kiai sections, onsets and beat grid, chosen notes per difficulty |
 | `--dump-events` | print every object with time, type and beat |
 
+`mania4k` uses the ranked-calibrated engine by default (CPU is fine; the first run downloads the 80 MB Beat This! tracker weights, or put `beat_this-final0.ckpt` into the models folder). `--mania-engine rules` selects the earlier rules; with `--mania-model` the experimental checkpoint predicts onsets, chords, and hold lengths. Standard-only options (including `--device`) are rejected in mania mode, and mania options are rejected in standard mode.
+
+Local experimental training (Python 3.10+, PyTorch, and audio dependencies; input consists of **real local** mania 4K `.osz` files and audio is never uploaded):
+
+```bash
+python -m autoosu.ml.mania_data --input /path/to/osz --out /path/to/prepared --seed 42
+python -m autoosu.ml.mania_train --data /path/to/prepared --out /path/to/mania4k.pt --device auto --seed 42 --steps 3000 --batch 2 --length 128 --eval-every 200 --patience 4
+python -m autoosu.ml.mania_eval --data /path/to/prepared --checkpoint /path/to/mania4k.pt --split val --out /path/to/val.json
+python -m autoosu song.ogg --mode mania4k --mania-model /path/to/mania4k.pt -d Hard -o /path/to/output
+```
+
+Preparation groups charts with the same artist/title or audio hash into one train/val/test split and keeps real 4K notes on a 1/8-beat grid. Tune the threshold on val, then evaluate test only once; the report separates original note-head timing from quantized-grid F1. The trained checkpoint is not bundled with the application or the existing standard model download. Automatically estimated BPM/offset can differ from the source map, so inspect generated maps before sharing.
+
 ### Python install
 
 ```bash
@@ -149,6 +172,7 @@ Python 3.10 or newer. This is also how to run it on macOS / Linux; the exe is Wi
 - **Placement looks human.** The coordinate model generates coordinates from pure noise; jumps, streams and slider shapes are learned. Every slider is fitted so it stays on screen.
 - **What is still missing.** One red line per song; slider length is not a model input yet, so long sliders on fast songs are occasionally shortened (a green line keeps the timing right);
   hitsounds are simple drum-based whistle / clap / finish; no storyboard. Check the map in the editor before submitting it anywhere.
+- **mania 4K uses the ranked-calibrated engine.** Timing is validated against the human red lines of ranked maps and supports tempo changes and multiple red lines; notes and lane patterns are learned from ranked 4K charts and star ratings are calibrated with osu!'s algorithm; every chart is checked for grid, attack and playability before it is written (method and results: [docs/mania4k_engine.md](docs/mania4k_engine.md)). Not done: SV effects, keysounds, deliberately designed mapper-style climaxes; live recordings with continuously drifting tempo fall back to one red line per beat. Look through the map in the editor before sharing it.
 
 ## How it works
 
@@ -157,6 +181,8 @@ Python 3.10 or newer. This is also how to run it on macOS / Linux; the exe is Wi
 **Analysis and timing (rules).** Harmonic / percussive split, onset envelopes per drum band (kick / snare / hat); tempogram BPM with octave correction;
 1 ms offset refinement on the waveform; downbeats from kicks, chord changes and loudness; loudness sections → kiai.
 Objects are written 26 ms before the audio transient, the convention of ranked maps that players calibrate their offset against.
+
+**mania 4K (rules).** It reuses audio analysis, timing, metadata, cover art and `.osz` packaging. Each difficulty selects notes from the rhythm grid, then seeded rules assign four lanes with hand alternation and fewer jacks. Strong beats can become controlled two- or three-note chords; sustained sounds can become quantised long notes. A lane occupied by a long note cannot receive another object. Files explicitly contain `Mode:3` and `CircleSize:4`.
 
 **Rhythm model** `rhythm_v0.pt`, about 29 M parameters. A bidirectional transformer on a 1/4-beat grid: each tick sees ±80 ms of mel spectrogram,
 its position in the bar, local loudness, plus the requested star rating / CS / AR / OD / HP, and predicts one of six classes
