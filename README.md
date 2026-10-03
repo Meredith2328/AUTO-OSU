@@ -12,6 +12,7 @@
 pip install -e .                       # Python 3.10+；CPU 即可
 python -m autoosu song.mp3 --mode mania4k -d Easy Normal Hard Insane Expert -o out
 python -m autoosu song.mp3 --mode mania4k -d Hard --mania-stars 3.5     # 指定星级
+python -m autoosu song.mp3 --mode mania4k --mania-style jack             # 谱面类型：auto/stream/jack/ln/hybrid
 python -m autoosu                       # GUI，游戏模式选 “osu!mania 4K”
 ```
 
@@ -40,7 +41,7 @@ python -m autoosu                       # GUI，游戏模式选 “osu!mania 4K�
 ## 迭代
 
 - **v1**：精确定时 + 卡点硬约束 + 星级校准。人工评分 70/100：卡点与难度到位，但键型单一（几乎都是切）、段落感弱、感受不到情绪起伏。
-- **v2（进行中）**：从排位谱学习段落、情绪强度与键型（叠/切/乱及细分）的关系，按段落规划键型与强度。
+- **v2**：先选谱面类型（切 / 叠 / LN / 混合，`--mania-style`，默认按星级与音乐自动选），再把歌切成音乐段落、按能量分级，按同类型排位谱学到的分布为每段规划主键型（可混一种副键型）和密度；配置模型以段落键型为条件。同类型对比：切谱 jumpstream/stream/roll 38/24/14 %（人工 40/23/13 %），叠谱 chordjack 32 %（人工 35 %），LN 谱 LN 80 %（人工 77 %）；卡点、星级、可玩性硬约束不变。详见 [docs/mania4k_engine.md](docs/mania4k_engine.md#v2-archetypes-sections-and-intensity)。
 
 已知限制：持续漂移速度的现场录音、swing/爵士、多次变速的比赛曲定时较弱；不做 SV 与键音。
 

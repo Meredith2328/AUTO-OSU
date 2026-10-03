@@ -21,6 +21,7 @@ def section_audio_features(mel: np.ndarray, env, attacks: np.ndarray, wins: Sequ
     rows = []
     for s, e in zip(bounds, list(bounds[1:]) + [n]):
         a, b = wins[s][0], wins[e - 1][1]
+        a = max(a, 0.0)                      # the first measure may start before the audio
         fa, fb = int(a / 1000 * mfps), max(int(a / 1000 * mfps) + 1, int(b / 1000 * mfps))
         ea, eb = int(a / 1000 * efps), max(int(a / 1000 * efps) + 1, int(b / 1000 * efps))
         loud = float(mel[fa:min(fb, len(mel))].astype(np.float32).mean()) if fa < len(mel) else 0.0

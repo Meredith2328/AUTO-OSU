@@ -146,7 +146,7 @@ def measure_features(mel: np.ndarray, mel_fps: float, wins: Sequence[Tuple[float
     """Per-window timbre summary: mean and std of each mel band (z-scored over the song)."""
     out = []
     for a, b in wins:
-        fa = int(a / 1000 * mel_fps)
+        fa = int(max(a, 0.0) / 1000 * mel_fps)
         fb = max(fa + 1, int(b / 1000 * mel_fps))
         seg = mel[fa:min(fb, len(mel))].astype(np.float32)
         if len(seg) == 0:

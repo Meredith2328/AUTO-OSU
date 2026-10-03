@@ -63,7 +63,8 @@ def structure_metrics(notes, reds, mel, env_high, rng) -> dict | None:
             _, c = np.unique(seg, return_counts=True)
             purity.append(c.max() / len(seg))
     fps_e = SR / HOP
-    high = np.array([env_high[int(a / 1000 * fps_e):max(int(a / 1000 * fps_e) + 1, int(b / 1000 * fps_e))].mean()
+    high = np.array([env_high[int(max(a, 0) / 1000 * fps_e):max(int(max(a, 0) / 1000 * fps_e) + 1,
+                                                                 int(b / 1000 * fps_e))].mean()
                      for a, b in p["windows"]])
     loud = feats[:, :feats.shape[1] // 2].mean(1)
     ok = np.isfinite(high) & np.isfinite(loud)

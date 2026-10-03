@@ -143,7 +143,7 @@ class Row:
 
 
 def select_rows(an: SongAnalysis, probs: Dict[str, np.ndarray], rules: Rules, theta: float,
-                chord_boost: float = 1.0, plan=None, contrast: float = 1.0) -> List[Row]:
+                chord_boost: float = 1.0, plan=None, contrast: float = 0.8) -> List[Row]:
     """Rows above theta, with each section's density scaled by its planned relative density, and
     chords / long notes given per section in the proportions human charts use for its pattern type."""
     from .planner import type_targets

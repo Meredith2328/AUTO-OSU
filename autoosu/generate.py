@@ -194,6 +194,8 @@ def _generate_mania4k(audio_path, difficulties: List[str], out_dir, seed: int, t
     from .mania4k.planner import choose_archetype
     from .mania4k.structure import ARCHETYPES
 
+    STYLE_LABEL = {"切": "stream", "叠": "jack", "LN": "LN", "hybrid": "hybrid"}
+
     # one chart style (archetype) for the whole set, decided at Hard level; 叠 is not used below 2*
     probs = note_probabilities(an, models[0], DIFFICULTIES["Hard"])
     p_note = 1.0 - probs["count"][:, 0]
@@ -212,7 +214,7 @@ def _generate_mania4k(audio_path, difficulties: List[str], out_dir, seed: int, t
                 f"(target {target:.2f}), too close to the previous difficulty")
             continue
         prev_stars = rep.stars
-        chart.version = f"{name} 4K"
+        chart.version = f"{name} 4K ({STYLE_LABEL[ARCHETYPES[arch]]})"
         check = verify_chart(chart, an.features.env, rules_for(target))
         if not check.ok:
             raise RuntimeError(f"{name}: generated chart failed verification ({', '.join(check.problems)})")
