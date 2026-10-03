@@ -190,15 +190,24 @@ def refine_phase(o: np.ndarray, w: np.ndarray, period: float, phase: float, tol:
     return phase + float(dd[order][int(np.searchsorted(cw, cw[-1] / 2))])
 
 
-def snap_bpm(period: float, n_beats: int, tol_ms: float = 2.0) -> float:
-    """Simplest BPM whose accumulated drift over half the segment stays below tol_ms."""
+def snap_bpm(period: float, n_beats: float, tol_ms: float = 2.0) -> float:
+    """Simplest BPM within the whole-segment budget (2 ms; 6 ms for integers).
+
+    Check the exported six-decimal beat length too; never round the fallback unchecked.
+    """
     bpm = 60000.0 / period
-    for q in (1.0, 0.5, 0.25, 0.2, 0.1, 0.05, 0.01):
+    for q in (1.0, 0.5, 0.25, 0.2, 0.1, 0.05, 0.01, 0.001):
         cand = round(bpm / q) * q
-        budget = 5.0 * tol_ms if q == 1.0 else tol_ms      # DAW-made songs have integer BPMs
-        if abs(60000.0 / cand - period) * max(1, n_beats) / 2.0 <= budget:
+        if cand <= 0:
+            continue
+        budget = 3.0 * tol_ms if cand == round(cand) else tol_ms
+        p = 60000.0 / cand
+        drift = max(abs(p - period), abs(round(p, 6) - period)) * max(1, n_beats)
+        if drift <= budget:
             return cand
-    return round(bpm, 3)
+    if abs(round(60000.0 / bpm, 6) - period) * max(1, n_beats) > tol_ms:
+        raise ValueError("segment exceeds the drift budget at .osu beat-length precision")
+    return bpm
 
 
 # --------------------------------------------------------------------------- metrical position
@@ -568,7 +577,10 @@ def estimate_timing(env: OnsetEnvelopes, beat_logit: np.ndarray, down_logit: np.
     first = t0 if first_note_ms is None else min(first_note_ms, t0)
     reds = to_red_lines(segs, meter, first)
     rate, dev = _total_rate(o[strong], w[strong], segs), tracker_deviation(beats, reds)
-    if allow_changes and dev > DRIFT_DEV_MS and local_ibi_cv(beats) <= DRIFT_MAX_CV:
+    # A partial segmentation may hide global drift below the trigger while still leaving
+    # poor alignment. Keep the same trigger and acceptance budgets, also on the global grid.
+    global_dev = tracker_deviation(beats, to_red_lines([glob], meter, first)) if len(segs) > 1 else dev
+    if allow_changes and max(dev, global_dev) > DRIFT_DEV_MS and local_ibi_cv(beats) <= DRIFT_MAX_CV:
         # the performance drifts against every constant grid but the tracker follows it steadily:
         # use a tempo map if it agrees with the tracker far better without losing attacks
         fol = follow_tracker(o, w, beats, down, glob, meter)
@@ -582,7 +594,7 @@ def estimate_timing(env: OnsetEnvelopes, beat_logit: np.ndarray, down_logit: np.
 
 def _finish(s: Segment, o: np.ndarray, w: np.ndarray, act: np.ndarray, down: np.ndarray, meter: int) -> Segment:
     """Snap the BPM, lock the phase to onsets, pick the beat quarter and the downbeat."""
-    n = max(1, int((s.end_ms - s.start_ms) / s.period))
+    n = max(1.0, (s.end_ms - s.start_ms) / s.period)
     period = 60000.0 / snap_bpm(s.period, n)
     m = (o >= s.start_ms) & (o < s.end_ms)
     phase = refine_phase(o[m], w[m], period, s.phase)
@@ -596,7 +608,8 @@ def _is_global(s: Segment, glob: Segment) -> bool:
     return abs(s.period - glob.period) < 1e-9 and abs(s.phase - glob.phase) < 1e-9
 
 
-def _near_global(s: Segment, glob: Segment, tol_ms: float = 10.0) -> bool:
+def _near_global(s: Segment, glob: Segment, tol_ms: float = 1e-6) -> bool:
+    # Only fold the same grid. A phase-only change has already passed the evidence gate.
     if abs(s.period - glob.period) > 1e-6:
         return False
     d = (s.phase - glob.phase) / (glob.period / 4)

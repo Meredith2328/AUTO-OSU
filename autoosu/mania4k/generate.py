@@ -21,7 +21,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import torch
 
-from .chart import KEYS, Chart, Note, RedLine
+from .chart import KEYS, Chart, Note, RedLine, rhythm_groups
 from .structure import TYPES
 from .features import DIV_CLASSES, POS_DIV, Grid, SongFeatures, build_grid, env_matrix, local_loudness, mel_index, song_features
 from .model import LN_BINS, NoteNet
@@ -156,7 +156,11 @@ def select_rows(an: SongAnalysis, probs: Dict[str, np.ndarray], rules: Rules, th
     divs = np.array([DIV_CLASSES[d] for d in g.div])
     # 1/8 only where it is a playable rhythm rather than a flam (>= 55 ms apart)
     allowed_div = np.isin(divs, rules.divisors) & ((divs != 8) | (g.beat_ms / 8.0 >= 55.0))
-    cand = np.where((score >= theta) & an.support & allowed_div)[0]
+    # Decide the family from supported, nonzero candidates before thresholding. Otherwise
+    # lowering theta can change a beat's family and erase a previously supported row.
+    eligible = np.where((p_note > 0) & an.support & allowed_div)[0]
+    eligible = np.asarray(consistent_snaps(g, eligible.tolist(), score, an.timing.red_lines), dtype=int)
+    cand = eligible[score[eligible] >= theta]
     order = cand[np.argsort(-score[cand], kind="stable")]
     taken: List[float] = []
     chosen: List[int] = []
@@ -169,7 +173,7 @@ def select_rows(an: SongAnalysis, probs: Dict[str, np.ndarray], rules: Rules, th
             continue
         taken.insert(j, t)
         chosen.append(int(i))
-    chosen = consistent_snaps(g, sorted(chosen), p_note)
+    chosen = consistent_snaps(g, sorted(chosen), score, an.timing.red_lines)
     if not chosen:
         return []
     chosen_arr = np.array(chosen)
@@ -217,23 +221,29 @@ def select_rows(an: SongAnalysis, probs: Dict[str, np.ndarray], rules: Rules, th
     return rows
 
 
-def consistent_snaps(g: Grid, chosen: List[int], p_note: np.ndarray) -> List[int]:
+def consistent_snaps(g: Grid, chosen: List[int], p_note: np.ndarray,
+                     reds: Optional[Sequence[RedLine]] = None) -> List[int]:
     """Mappers do not mix straight and triplet rhythms inside a beat, nor drop a lone triplet into
-    straight music: keep one family per beat (the one the model supports more) and only keep
+    straight music: keep one family per beat (the strongest supported row wins) and only keep
     triplet beats that belong to a triplet passage (another triplet beat within two beats)."""
     if not chosen:
         return chosen
-    fam = {}                                         # beat -> {"s": [...], "t": [...]}
-    for i in chosen:
-        d = POS_DIV[g.pos[i]]
-        b = int(np.floor(g.beat[i] + 1e-6))
-        kind = "t" if d in (3, 6) else ("s" if d != 1 else "b")
-        fam.setdefault(b, {"s": [], "t": [], "b": []})[kind].append(i)
+    fam = {}                                         # (red line, local beat) -> families
+    if reds is not None:
+        index = {float(g.times[i]): i for i in chosen}
+        fam = {key: {kind: [index[t] for t in ts] for kind, ts in f.items()}
+               for key, f in rhythm_groups(reds, list(index)).items()}
+    else:
+        for i in chosen:
+            d = POS_DIV[g.pos[i]]
+            b = (0, int(np.floor(g.beat[i] + 1e-6)))
+            kind = "t" if d in (3, 6) else ("s" if d != 1 else "b")
+            fam.setdefault(b, {"s": [], "t": [], "b": []})[kind].append(i)
     triplet_beats = set()
     keep: List[int] = []
     for b, f in fam.items():
         if f["t"] and f["s"]:
-            if p_note[f["t"]].sum() > p_note[f["s"]].sum():
+            if p_note[f["t"]].max() > p_note[f["s"]].max():
                 f["s"] = []
             else:
                 f["t"] = []
@@ -241,7 +251,7 @@ def consistent_snaps(g: Grid, chosen: List[int], p_note: np.ndarray) -> List[int
             triplet_beats.add(b)
     for b, f in fam.items():
         keep += f["b"] + f["s"]
-        if f["t"] and any(nb in triplet_beats for nb in (b - 2, b - 1, b + 1, b + 2)):
+        if f["t"] and any((b[0], b[1] + d) in triplet_beats for d in (-2, -1, 1, 2)):
             keep += f["t"]
     return sorted(keep)
 
@@ -405,6 +415,13 @@ def generate_chart(an: SongAnalysis, name: str, target_stars: Optional[float] = 
         rows = select_rows(an, probs, rules, theta, boost, plan)
         notes = assign_lanes(an, rows, rules, pnet, target, np.random.default_rng(seed),
                              archetype=archetype)
+        # Lane occupancy may remove a triplet's only neighbouring beat. Re-check the
+        # surviving heads before scoring/export; retain all lanes and tails of kept rows.
+        heads = {n.time for n in notes}
+        kept = consistent_snaps(an.grid, [r.tick for r in rows if r.time in heads],
+                                1.0 - probs["count"][:, 0], an.timing.red_lines)
+        kept_times = {float(an.grid.times[i]) for i in kept}
+        notes = [n for n in notes if n.time in kept_times]
         chart = Chart(notes, list(an.timing.red_lines), rules.od, rules.hp, name)
         return chart, (star_rating(chart_to_osu_text(chart)) if notes else 0.0)
 

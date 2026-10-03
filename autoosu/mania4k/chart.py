@@ -159,3 +159,33 @@ def main_bpm(reds: Sequence[RedLine], end_ms: float) -> float:
         nxt = reds[i + 1].time if i + 1 < len(reds) else max(end_ms, r.time)
         spans[round(r.bpm, 3)] = spans.get(round(r.bpm, 3), 0.0) + max(0.0, nxt - r.time)
     return max(spans.items(), key=lambda kv: kv[1])[0]
+
+
+def rhythm_groups(reds: Sequence[RedLine], times: Sequence[float], tol_ms: float = 1.0) -> dict:
+    """Distinct heads by (phase-contiguous region, beat) and rhythm family.
+
+    Beat heads are neutral. Beat-aligned red lines continue a passage across tempo changes;
+    phase discontinuities start a new region instead of mixing unrelated local beats.
+    Use the snapped position, not floor(raw time), so integer export rounding is harmless.
+    Tails retain their separate grid constraint; they are not new attacks.
+    """
+    groups = {}
+    origins = [(0, 0)]
+    for ri in range(1, len(reds)):
+        prev, r = reds[ri - 1], reds[ri]
+        span = (r.time - prev.time) / prev.beat_ms
+        region, base = origins[-1]
+        origins.append((region, base + round(span)) if abs(span - round(span)) * prev.beat_ms <= tol_ms
+                       else (ri, 0))
+    for t in sorted(set(times)):
+        ri = max([i for i, r in enumerate(reds) if r.time <= t + 1e-6] or [0])
+        r = reds[ri]
+        d = snap_of(reds, t, (1, 2, 4, 8, 3, 6), tol_ms)
+        if d is None:
+            continue
+        pos = round((t - r.time) / r.beat_ms * d)
+        region, base = origins[ri]
+        key = (region, base + pos // d)
+        family = "b" if d == 1 else ("t" if d in (3, 6) else "s")
+        groups.setdefault(key, {"b": [], "s": [], "t": []})[family].append(t)
+    return groups

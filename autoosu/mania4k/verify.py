@@ -7,7 +7,7 @@ from typing import Dict, List, Sequence
 
 import numpy as np
 
-from .chart import Chart, Note, RedLine, red_line_at, snap_of
+from .chart import Chart, Note, RedLine, red_line_at, rhythm_groups, snap_of
 
 
 def beat_position(reds: Sequence[RedLine], t: float) -> tuple[float, RedLine]:
@@ -89,18 +89,26 @@ class ChartCheck:
     big_chords: int = 0
     tight_rows: int = 0             # rows closer than the difficulty's minimum gap
     before_first_red: int = 0
+    mixed_rhythm_beats: int = 0
+    isolated_triplet_beats: int = 0
     problems: List[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
         return not (self.off_grid or self.unsupported or self.overlaps or self.fast_jacks or self.big_chords
-                    or self.tight_rows or self.before_first_red)
+                    or self.tight_rows or self.before_first_red or self.mixed_rhythm_beats
+                    or self.isolated_triplet_beats)
 
 
 def verify_chart(chart: Chart, env=None, rules=None, grid_tol_ms: float = 1.0) -> ChartCheck:
     """Re-check a generated chart (audio time) against its own red lines, the audio and the rules."""
     chk = ChartCheck(len(chart.notes))
     reds = chart.red_lines
+    groups = rhythm_groups(reds, chart.heads, grid_tol_ms)
+    chk.mixed_rhythm_beats = sum(bool(f["s"] and f["t"]) for f in groups.values())
+    triplets = {key for key, f in groups.items() if f["t"]}
+    chk.isolated_triplet_beats = sum(not any((ri, b + d) in triplets for d in (-2, -1, 1, 2))
+                                     for ri, b in triplets)
     for n in chart.notes:
         for t in ([n.time, n.end] if n.is_hold else [n.time]):
             if snap_of(reds, t, (1, 2, 3, 4, 6, 8), grid_tol_ms) is None:
@@ -129,7 +137,8 @@ def verify_chart(chart: Chart, env=None, rules=None, grid_tol_ms: float = 1.0) -
         chk.big_chords = sum(c > rules.max_chord for c in rows.values())
         ts = sorted(rows)
         chk.tight_rows = sum(b - a < rules.min_row_gap_ms - 1.5 for a, b in zip(ts, ts[1:]))
-    for name in ("off_grid", "unsupported", "overlaps", "fast_jacks", "big_chords", "tight_rows", "before_first_red"):
+    for name in ("off_grid", "unsupported", "overlaps", "fast_jacks", "big_chords", "tight_rows", "before_first_red",
+                 "mixed_rhythm_beats", "isolated_triplet_beats"):
         if getattr(chk, name):
             chk.problems.append(f"{name}={getattr(chk, name)}")
     return chk
