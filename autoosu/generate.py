@@ -176,6 +176,13 @@ def _generate_mania4k(audio_path, difficulties: List[str], out_dir, seed: int, t
         f"{r.time / 1000:.1f}s ({r.bpm:g})" for r in tm.red_lines[1:6])
     log(f"[3/4] timing: main BPM {bpm:g}, {len(tm.red_lines)} red line(s){changes} "
         f"(written {OSU_SHIFT_MS:g} ms early, ranked osu! convention)")
+    if tm.kind == "follow":
+        log("      the performance's tempo drifts: red lines follow it measure by measure, "
+            "SV keeps the scroll speed constant")
+    elif tm.kind != "forced" and tm.tracker_dev_ms > 20.0:
+        log(f"      warning: no steady beat found (beat tracker and grid disagree by "
+            f"{tm.tracker_dev_ms:.0f} ms); every note still sits on an attack, but the rhythm grid may "
+            f"read oddly. Consider --bpm / --offset.")
     meta_title, meta_artist = read_metadata(audio_path)
     title, artist = title or meta_title, artist or meta_artist
     workdir = out_dir / ".work"
@@ -194,7 +201,7 @@ def _generate_mania4k(audio_path, difficulties: List[str], out_dir, seed: int, t
     from .mania4k.structure import ARCHETYPES
     from .mania4k.style import analysis_descriptors
 
-    STYLE_LABEL = {"乱": "speed", "叠": "jack", "LN": "LN", "混合": "hybrid"}
+    STYLE_LABEL = {"切": "stream", "乱": "speed", "叠": "jack", "LN": "LN", "混合": "hybrid"}
     diffs: List[DiffResult] = []
     prev_stars: Optional[float] = None
     for i, name in enumerate(sorted(names, key=lambda n: DIFFICULTIES[n])):

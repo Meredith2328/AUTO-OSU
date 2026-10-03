@@ -156,16 +156,19 @@ Human review of v1 (70/100): sync and difficulty right, but patterns monotonous 
 no section feel, no emotional arc. v2 is built on what human charts actually do, measured on the
 corpus with `autoosu/mania4k/structure.py`:
 
-* **Pattern types per measure**: stream, roll, jumpstream, handstream (乱 / speed); trill (切);
-  jack, chordjack (叠); LN; mixed (混合); light.
-* **Charts first commit to an archetype**, and the distributions only make sense within one:
+* **Pattern types per measure** (taxonomy, community sources and thresholds:
+  [mania4k_patterns.md](mania4k_patterns.md)): jumpstream, handstream, trill (切 / stream);
+  stream, roll (乱 / speed); jack, chordjack (叠 / jack); mixed (技 / tech); LN; light.
+* **Charts first commit to an archetype**, and the distributions only make sense within one
+  (849 ranked charts):
 
-  | archetype | charts | median ★ | main types |
+  | archetype | charts | median ★ | main families |
   | --- | --- | --- | --- |
-  | 乱 speed | 337 | 2.6 | jumpstream 39 %, stream 24 %, roll 11 % |
-  | LN | 276 | 3.4 | LN 73 %, jumpstream 10 % |
-  | 混合 hybrid | 166 | 3.4 | jumpstream 27 %, LN 27 %, mixed 16 %, chordjack 9 % |
-  | 叠 jack | 60 | 4.2 | chordjack 46 %, mixed 15 %, jumpstream 14 % |
+  | 切 stream | 211 | 3.1 | 切 56 %, 乱 19 % |
+  | 乱 speed | 129 | 1.7 | 乱 59 %, 切 22 % (35 charts ≥ 3★) |
+  | 叠 jack | 61 | 4.1 | 叠 42 %, 切 19 %, 技 11 % |
+  | LN | 281 | 3.3 | LN 73 % |
+  | 混合 hybrid | 167 | 3.4 | LN 33 %, 切 31 %, 技 13 % |
 
 * **Sections**: on music sections found by self-similarity novelty of measure spectra, human charts
   change density 2.7× more at boundaries than elsewhere (|Δlog nps| 0.38 vs 0.14) and change type
@@ -173,7 +176,7 @@ corpus with `autoosu/mania4k/structure.py`:
 * **Intensity**: measure density follows loudness / high-band flux (Spearman ≈ +0.5), much more
   than raw attack count (+0.2); by section energy level (rest / low / mid / climax) density goes
   from −45…−60 % to +5 % of the chart mean, and the harder subtype takes over at climaxes
-  (乱: stream → jumpstream; 叠: chordjack 29 % → 59 %).
+  (切: ljs → djs/handstream; 叠: chordjack 29 % → 59 %).
 
 The generator follows the same order (`planner.py`): choose an archetype (`--mania-style`, or auto,
 see [the honesty audit](#v21-honesty-audit-unseen-music) for how; no 叠 below 2★), cut the song

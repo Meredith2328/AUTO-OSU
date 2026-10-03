@@ -15,11 +15,11 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from autoosu.mania4k.chart import RedLine                                    # noqa: E402
+from autoosu.mania4k.chart import RedLine, main_bpm                          # noqa: E402
 from autoosu.mania4k.onsets import HOP, SR                                    # noqa: E402
 from autoosu.mania4k.planner import load_plan                                 # noqa: E402
 from autoosu.mania4k.structure import ARCHETYPES, chart_archetype, chart_profile  # noqa: E402
-from autoosu.mania4k.style import DESCRIPTORS, STYLE_FILE, main_bpm, song_descriptors  # noqa: E402
+from autoosu.mania4k.style import DESCRIPTORS, STYLE_FILE, song_descriptors    # noqa: E402
 
 
 def dataset(prepared: Path):

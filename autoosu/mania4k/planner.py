@@ -1,7 +1,7 @@
 """Section planner: what each part of the song should feel like, learned from ranked charts.
 
-Human 4K charts first commit to an overall style (archetype: 乱 speed-, 叠 jack-, LN-dominant or
-混合 hybrid), then give each musical section one main pattern type and a density that follows the
+Human 4K charts first commit to an overall style (archetype: 切 stream-, 乱 speed-, 叠 jack-, LN-dominant
+or 混合 hybrid), then give each musical section one main pattern type and a density that follows the
 section's energy (rest sections ~45-60 % sparser than the chart, climaxes slightly denser and with
 the harder subtypes: jumpstream over stream, more chordjack, more LN). The type usually changes
 when the music changes section. All of these statistics are fitted per archetype by
@@ -26,9 +26,9 @@ from .structure import ARCHETYPES, TYPES, measure_windows, measure_features, nov
 PLAN_FILE = Path(__file__).resolve().parent / "weights" / "plan.json"
 # share of long sections that mix in a second type; human in-section purity is 0.81 for LN charts
 # and 0.62-0.67 for the other archetypes
-SECONDARY_RATE = {"乱": 0.5, "叠": 0.5, "LN": 0.15, "混合": 0.55}
-STYLE_NAMES = {"auto": None, "speed": "乱", "stream": "乱", "jack": "叠", "ln": "LN", "hybrid": "混合",
-               "乱": "乱", "叠": "叠", "LN": "LN", "混合": "混合"}
+SECONDARY_RATE = {"切": 0.5, "乱": 0.5, "叠": 0.5, "LN": 0.15, "混合": 0.55}
+STYLE_NAMES = {"auto": None, "stream": "切", "speed": "乱", "jack": "叠", "ln": "LN", "hybrid": "混合",
+               "切": "切", "乱": "乱", "叠": "叠", "LN": "LN", "混合": "混合"}
 
 
 @lru_cache(maxsize=1)

@@ -181,7 +181,8 @@ def test_archetype_and_plan_follow_the_tables():
 
     assert chart_archetype(["ln"] * 6 + ["stream"] * 2) == "LN"
     assert chart_archetype(["chordjack"] * 4 + ["jumpstream"] * 6) == "叠"
-    assert chart_archetype(["stream"] * 5 + ["jumpstream"] * 4 + ["mixed"]) == "乱"
+    assert chart_archetype(["stream"] * 5 + ["roll"] * 1 + ["jumpstream"] * 3 + ["mixed"]) == "乱"
+    assert chart_archetype(["jumpstream"] * 5 + ["handstream"] * 2 + ["stream"] * 3) == "切"
     assert ARCHETYPES[choose_archetype(1.5, "jack")] == "乱"       # no jack charts below 2 stars
     assert ARCHETYPES[choose_archetype(4.0, "ln")] == "LN"
     secs = [Section(i * 8000.0, (i + 1) * 8000.0, 8, e, lv) for i, (e, lv) in
@@ -198,11 +199,11 @@ def test_archetype_and_plan_follow_the_tables():
 def test_pattern_families_use_community_terms():
     from autoosu.mania4k.structure import ARCHETYPES, FAMILY
 
-    assert FAMILY["stream"] == FAMILY["jumpstream"] == FAMILY["handstream"] == "乱"     # 乱 = speed
-    assert FAMILY["trill"] == "切"
+    assert FAMILY["stream"] == FAMILY["roll"] == "乱"                                 # speed: fast single notes
+    assert FAMILY["jumpstream"] == FAMILY["handstream"] == FAMILY["trill"] == "切"    # stream: chords, switching
     assert FAMILY["jack"] == FAMILY["chordjack"] == "叠"
-    assert FAMILY["mixed"] == "混合"                                                    # 混合 = mixed
-    assert ARCHETYPES == ("乱", "叠", "LN", "混合")
+    assert FAMILY["mixed"] == "技"
+    assert ARCHETYPES == ("切", "乱", "叠", "LN", "混合")
 
 
 def test_style_model_reads_the_music():
@@ -217,7 +218,7 @@ def test_style_model_reads_the_music():
     p = archetype_probs(x)
     assert p is not None and abs(p.sum() - 1) < 1e-9
     assert choose_archetype(3.2, "auto", descriptors=x) == int(np.argmax(p))
-    assert choose_archetype(3.2, "ln", descriptors=x) == 2                          # a request wins
+    assert choose_archetype(3.2, "ln", descriptors=x) == 3                          # a request wins
 
 
 def test_bpm_changes_get_normalized_scroll_speed():
@@ -227,3 +228,24 @@ def test_bpm_changes_get_normalized_scroll_speed():
     sv = normalized_sv(reds, 120000.0)
     assert sv[0] == sv[2] == 1.0 and abs(sv[1] - 0.8) < 1e-9          # 150 BPM part scrolls at 120 BPM speed
     assert normalized_sv(reds[:1], 120000.0) == [1.0]
+
+
+def test_drifting_performance_gets_a_tempo_map():
+    from autoosu.mania4k.timing import tracker_deviation
+
+    sr = 22050
+    rng = np.random.default_rng(1)
+    t, beats = 0.5, []
+    for k in range(160):                       # a player drifting 112 -> 128 BPM, wobbling every few beats
+        beats.append(t * 1000)
+        bpm = 112 + 16 * k / 160 + 6 * np.sin(k / 4)
+        t += 60.0 / bpm
+    y = np.zeros(int((t + 1) * sr))
+    n = int(0.04 * sr)
+    for k, b in enumerate(beats):
+        i = int(b / 1000 * sr)
+        y[i:i + n] += rng.normal(size=n) * np.exp(-np.arange(n) / (0.006 * sr)) * (1.0 if k % 4 == 0 else 0.6)
+    beat, down = logits_for(beats, beats[::4], len(y) / sr * 1000)
+    res = estimate_timing(onset_envelopes(y, sr), beat, down)
+    assert res.kind == "follow" and len(res.red_lines) > 4
+    assert tracker_deviation(np.array(beats), res.red_lines) < 10.0     # one constant grid: 20+ ms

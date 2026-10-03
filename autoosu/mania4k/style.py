@@ -64,14 +64,10 @@ def archetype_probs(x: np.ndarray) -> np.ndarray | None:
     return p / p.sum()
 
 
-def main_bpm(reds, end_ms: float) -> float:
-    """BPM of the red line that covers most of the song."""
-    spans = [((reds[i + 1].time if i + 1 < len(reds) else end_ms) - r.time, r) for i, r in enumerate(reds)]
-    return 60000.0 / max(spans, key=lambda s: s[0])[1].beat_ms
-
-
 def analysis_descriptors(an, stars: float) -> np.ndarray:
     """song_descriptors for a generate.SongAnalysis."""
+    from .chart import main_bpm
+
     e = an.features.env
     return song_descriptors(an.features.mel, e.full, e.low, e.mid, e.high, e.fps,
                             main_bpm(an.timing.red_lines, an.duration_ms), stars)

@@ -388,7 +388,7 @@ class ChartReport:
 def generate_chart(an: SongAnalysis, name: str, target_stars: Optional[float] = None, seed: int = 0,
                    models: Optional[Tuple[NoteNet, PatternNet]] = None, tolerance: float = 0.08,
                    style: str = "auto", archetype: Optional[int] = None) -> Tuple[Chart, ChartReport]:
-    """One difficulty. ``style`` picks the chart archetype (auto | speed | jack | ln | hybrid);
+    """One difficulty. ``style`` picks the chart archetype (auto | stream | speed | jack | ln | hybrid);
     the section plan (one pattern type and density per music section) follows it."""
     from .planner import choose_archetype, make_plan
     from .style import analysis_descriptors
@@ -459,11 +459,9 @@ def normalized_sv(reds: Sequence[RedLine], end_ms: float) -> List[float]:
     """Slider velocity per red line that cancels osu!mania's BPM-dependent scroll speed: speed is
     relative to the beat length covering most of the map (as osu! computes it), so a red line
     with beat length L gets SV L / L_main. 1.0 everywhere for a single BPM."""
-    dur: Dict[float, float] = {}
-    for i, r in enumerate(reds):
-        nxt = reds[i + 1].time if i + 1 < len(reds) else max(end_ms, r.time)
-        dur[round(r.beat_ms, 3)] = dur.get(round(r.beat_ms, 3), 0.0) + max(0.0, nxt - r.time)
-    main = max(dur, key=dur.get) if dur else 1.0
+    from .chart import main_bpm
+
+    main = 60000.0 / main_bpm(reds, end_ms)
     return [float(np.clip(r.beat_ms / main, 0.1, 10.0)) if abs(r.beat_ms - main) > 1e-3 else 1.0 for r in reds]
 
 
