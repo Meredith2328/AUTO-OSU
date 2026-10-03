@@ -137,12 +137,12 @@
  ],
  "heldout": {
   "accuracy": 0.35294117647058826,
-  "balanced": 0.2763219741480611,
-  "prior_accuracy": 0.3445378151260504,
-  "prior_balanced": 0.2997884841363102
+  "balanced": 0.2771030771030771,
+  "prior_accuracy": 0.33613445378151263,
+  "prior_balanced": 0.28775008775008776
  },
  "grouped_cv": {
   "accuracy": 0.41784037558685444,
-  "prior_accuracy": 0.36971830985915494
+  "prior_accuracy": 0.3685446009389671
  }
 }

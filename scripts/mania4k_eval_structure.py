@@ -3,7 +3,7 @@
 Compares charts saved by ``mania4k_eval.py --save-dir`` with the ranked charts they were generated
 for (same song, same star rating). Per chart, on 1-measure windows:
 
-* pattern types (stream, roll, jumpstream, handstream, jack, chordjack, ln, mixed, light)
+* pattern types (stream, trill, roll, jumpstream, handstream, jack, chordjack, ln, mixed, light)
   -> share of the most common type (monotony) and type entropy;
 * results are reported per archetype of the ranked chart (切 / 乱 / 叠 / LN / 混合): human charts of
   different archetypes have very different distributions and must not be pooled;

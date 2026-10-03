@@ -163,8 +163,9 @@ def test_pattern_types_are_recognised():
     reds = [RedLine(1000.0, 500.0)]
     cases = [
         ("roll", [1, 2, 4, 8, 4, 2, 1, 2, 4, 8, 4, 2, 1, 2, 4, 8] * 4),
-        ("stream", [1, 2] * 32),                     # 交互 of single notes: speed family
-        ("jumpstream", [3, 12] * 32),                # 交互 of jumps (jumptrill): stream family
+        ("trill", [1, 2] * 32),                      # long alternation: a trill section (长交互)
+        ("trill", [3, 12] * 32),                     # also with jumps (long jumptrill)
+        ("stream", [1, 2, 1, 4, 8, 2, 4, 1, 8, 4, 2, 8, 1, 2, 8, 4] * 4),   # short 交互 inside speed
         ("jumpstream", [5, 2, 8, 1, 10, 4, 1, 8] * 8),
         ("chordjack", [3, 7, 3, 14, 6, 7, 3, 11] * 8),
     ]
@@ -202,7 +203,7 @@ def test_pattern_families_use_community_terms():
 
     assert FAMILY["stream"] == FAMILY["roll"] == "乱"                                 # speed: fast single notes
     assert FAMILY["jumpstream"] == FAMILY["handstream"] == "切"                     # stream: chords as backbone
-    assert "trill" not in FAMILY                                                     # 交互 is a building block
+    assert FAMILY["trill"] == "交互"                                                 # trill section (长交互)
     assert FAMILY["jack"] == FAMILY["chordjack"] == "叠"
     assert FAMILY["mixed"] == "技"
     assert ARCHETYPES == ("切", "乱", "叠", "LN", "混合")

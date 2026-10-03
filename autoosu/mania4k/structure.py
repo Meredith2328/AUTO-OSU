@@ -6,8 +6,10 @@ Vocabulary (4K community terms; full definitions and sources in docs/mania4k_pat
   chords (ljs / djs, also jumptrills and splits); ``handstream``: with three-note chords (lhs / dhs).
 * 乱 / speed family (fast single notes, no jacks) - ``stream``: scattered single notes;
   ``roll``: stairs (1234 / 4321) and their variants.
-* 交互 (alternation, one- or two-handed) is not a type: it is the building block of all of the
-  families above, measured per window as ``WindowStats.trill``.
+* "trill" has two meanings. As a building block, 交互 (alternation, one- or two-handed, also
+  scattered) is part of every family above and is only measured (``WindowStats.trill``). As a
+  section type, ``trill`` (交互段 / 长交互) is on the same scale as stream or tech: alternation
+  dominates the window and runs long (share >= 0.5 and a run of >= 8 rows).
 * 叠 / jack family - ``jack``: single notes repeating a lane (incl. minijacks); ``chordjack``:
   chords sharing lanes with the previous row (小/中/大叠).
 * 技 / ``mixed``: stream and jack interleaved in one window (tech).
@@ -24,8 +26,8 @@ from typing import Dict, List, Sequence, Tuple
 
 import numpy as np
 
-TYPES = ("light", "stream", "roll", "jumpstream", "handstream", "jack", "chordjack", "ln", "mixed")
-FAMILY = {"light": "light", "stream": "乱", "roll": "乱", "jumpstream": "切", "handstream": "切",
+TYPES = ("light", "stream", "trill", "roll", "jumpstream", "handstream", "jack", "chordjack", "ln", "mixed")
+FAMILY = {"light": "light", "stream": "乱", "roll": "乱", "trill": "交互", "jumpstream": "切", "handstream": "切",
           "jack": "叠", "chordjack": "叠", "ln": "LN", "mixed": "技"}
 
 
@@ -55,6 +57,7 @@ class WindowStats:
     roll: float           # share of single-note rows continuing a +-1 lane staircase
     ln: float             # share of rows starting a long note
     triple: float         # share of rows with >= 3 notes
+    trill_run: int = 0    # longest unbroken alternation (ABAB...) in rows
 
 
 def window_stats(rows: Sequence[Tuple[float, int, float]], span_ms: float) -> WindowStats:
@@ -67,6 +70,11 @@ def window_stats(rows: Sequence[Tuple[float, int, float]], span_ms: float) -> Wi
     jack = float(np.mean([(a & b) != 0 for a, b in pairs])) if pairs else 0.0
     tr = [masks[i] == masks[i - 2] and (masks[i] & masks[i - 1]) == 0 for i in range(2, n)]
     trill = float(np.mean(tr)) if tr else 0.0
+    run = best = 0
+    for x in tr:
+        run = run + 1 if x else 0
+        best = max(best, run)
+    trill_run = best + 2 if best else 0
     ro = []
     for i in range(2, n):
         if pcs[i] == pcs[i - 1] == pcs[i - 2] == 1:
@@ -74,11 +82,18 @@ def window_stats(rows: Sequence[Tuple[float, int, float]], span_ms: float) -> Wi
             ro.append(abs(b - a) == 1 and (c - b) == (b - a))
     roll = float(np.mean(ro)) if ro else 0.0
     return WindowStats(n, n / max(span_ms / 1000.0, 1e-6) * float(np.mean(pcs)), float(np.mean(pcs)), jack,
-                       trill, roll, float(np.mean([l > 0 for _, _, l in rows])), float(np.mean([p >= 3 for p in pcs])))
+                       trill, roll, float(np.mean([l > 0 for _, _, l in rows])), float(np.mean([p >= 3 for p in pcs])),
+                       trill_run)
+
+
+def is_trill_section(s: WindowStats) -> bool:
+    """交互段 / 长交互: alternation dominates the window and runs unbroken for >= 8 rows."""
+    return s.trill >= 0.5 and s.trill_run >= 8
 
 
 def classify(s: WindowStats, light_nps: float) -> str:
-    """Dominant pattern type of a window (thresholds fitted on ranked 4K charts, see docs)."""
+    """Dominant pattern type of a window (thresholds fitted on ranked 4K charts, see
+    docs/mania4k_patterns.md)."""
     if s.rows < 4 or s.nps < light_nps:
         return "light"
     if s.ln >= 0.35:
@@ -87,11 +102,15 @@ def classify(s: WindowStats, light_nps: float) -> str:
         if s.jack >= 0.5:
             return "chordjack"
         if s.jack <= 0.3:
+            if is_trill_section(s):
+                return "trill"
             return "handstream" if s.triple >= 0.2 else "jumpstream"
         return "mixed"
     if s.jack >= 0.4:
         return "jack"
     if s.jack <= 0.2:
+        if is_trill_section(s):
+            return "trill"
         if s.roll >= 0.4:
             return "roll"
         return "jumpstream" if s.chord >= 1.2 else "stream"
@@ -204,11 +223,11 @@ def chart_archetype(types: Sequence[str]) -> str:
     act = [t for t in types if t != "light"]
     if not act:
         return "乱"
-    fam = {k: sum(FAMILY[t] == k for t in act) / len(act) for k in ("切", "乱", "叠", "LN", "技")}
+    fam = {k: sum(FAMILY[t] == k for t in act) / len(act) for k in ("切", "乱", "交互", "叠", "LN", "技")}
     if fam["LN"] >= 0.5:
         return "LN"
     if fam["叠"] >= 0.3:
         return "叠"
-    if fam["切"] + fam["乱"] >= 0.6:
+    if fam["切"] + fam["乱"] + fam["交互"] >= 0.6:
         return "切" if fam["切"] >= fam["乱"] else "乱"
     return "混合"
