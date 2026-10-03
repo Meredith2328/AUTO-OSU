@@ -1,24 +1,46 @@
 name: tests
 
+# Lightweight CI: a seconds-long lint job for real bugs, then the pytest suite on one Linux runner
+# with CPU-only torch. Superseded runs are cancelled; pip downloads are cached.
+
 on:
   push:
     branches: [master]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
-  pytest:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-        python: ["3.12"]
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python }}
+          python-version: "3.12"
+      - name: Ruff (syntax errors, undefined names)
+        run: |
+          pip install ruff
+          ruff check --select E9,F63,F7,F82 --exclude coord,autoosu/ml/coord .
+
+  pytest:
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
           cache: pip
+          cache-dependency-path: pyproject.toml
       - name: Install (CPU torch)
         run: |
           python -m pip install --upgrade pip
