@@ -119,7 +119,8 @@ def prepare_audio(src: Path, workdir: Path) -> Path:
 def write_osz(beatmaps: List[Beatmap], audio: Path, out_dir: Path, extra_files: Sequence[Path] = ()) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     first = beatmaps[0]
-    osz = out_dir / sanitize(f"{first.artist} - {first.title} ({first.creator}).osz")
+    mode_suffix = " [mania 4K]" if first.mode == 3 else ""
+    osz = out_dir / sanitize(f"{first.artist} - {first.title} ({first.creator}){mode_suffix}.osz")
     with zipfile.ZipFile(osz, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.write(audio, audio.name)
         for extra in extra_files:

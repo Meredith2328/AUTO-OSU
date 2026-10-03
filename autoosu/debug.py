@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .beatmap import PLAYFIELD_H, PLAYFIELD_W, Slider, Spinner
+from .beatmap import Hold, PLAYFIELD_H, PLAYFIELD_W, Slider, Spinner
 from .placement import circle_radius
 
 
@@ -87,7 +87,7 @@ def plot_debug(res, out_png: Path, window_s: float = 24.0, playfield_measures: i
                 continue
             if ev.kind == "circle":
                 ax_ev.scatter(ev.time / 1000, y, s=40, color="tab:red", zorder=3)
-            elif ev.kind == "slider":
+            elif ev.kind in ("slider", "hold"):
                 ax_ev.plot([ev.time / 1000, ev.end_time / 1000], [y, y], color="tab:green", lw=6,
                            solid_capstyle="round")
             else:
@@ -121,7 +121,9 @@ def plot_debug(res, out_png: Path, window_s: float = 24.0, playfield_measures: i
                 continue
             if prev is not None:
                 ax_pf.plot([prev[0], o.x], [prev[1], o.y], color="k", alpha=0.25, lw=0.8)
-            if isinstance(o, Slider):
+            if isinstance(o, Hold):
+                ax_pf.plot([o.x, o.x], [o.y, 0], color=col, lw=r * 0.7, alpha=0.35)
+            elif isinstance(o, Slider):
                 path = _slider_path((o.x, o.y), o)
                 ax_pf.plot(path[:, 0], path[:, 1], color=col, lw=r * 0.9, alpha=0.35, solid_capstyle="round")
                 ax_pf.add_patch(MplCircle((o.end_x, o.end_y), r * 0.5, fill=False, color=col, lw=1))

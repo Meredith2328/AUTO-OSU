@@ -11,7 +11,7 @@ import numpy as np
 
 from .audio import AudioAnalysis, analyze, load_audio
 from .audio_io import VIDEO_EXTS
-from .beatmap import Beatmap, Break, HitObject, Slider, Spinner, TimingPoint
+from .beatmap import Beatmap, Break, HitObject, Hold, Slider, Spinner, TimingPoint
 from .difficulty import DifficultyPreset, get_preset
 from .package import extract_cover, prepare_audio, prepare_background, read_metadata, write_osz
 from .placement import place
@@ -38,9 +38,10 @@ class DiffResult:
         n = len(objs)
         sliders = sum(isinstance(o, Slider) for o in objs)
         spinners = sum(isinstance(o, Spinner) for o in objs)
-        span = (objs[-1].end_time - objs[0].time) / 1000.0 if n > 1 else 1.0
-        return {"objects": n, "circles": n - sliders - spinners, "sliders": sliders,
-                "spinners": spinners, "nps": round(n / max(span, 1e-6), 2),
+        holds = sum(isinstance(o, Hold) for o in objs)
+        span = (max(o.end_time for o in objs) - min(o.time for o in objs)) / 1000.0 if n > 1 else 1.0
+        return {"objects": n, "circles": n - sliders - spinners - holds, "sliders": sliders,
+                "spinners": spinners, "holds": holds, "nps": round(n / max(span, 1e-6), 2),
                 "length_s": round(span, 1)}
 
 
@@ -49,7 +50,7 @@ class GenerateResult:
     osz: Path
     audio_file: Path
     timing: Timing
-    analysis: AudioAnalysis
+    analysis: Optional[AudioAnalysis]          # None for the mania4k ranked engine
     diffs: List[DiffResult] = field(default_factory=list)
     elapsed_s: float = 0.0
     osu_shift_ms: int = OSU_TIMING_SHIFT_MS
@@ -63,9 +64,13 @@ def approach_ms(ar: float) -> float:
 def compute_breaks(objects: List[HitObject], ar: float, min_gap_ms: int = 5000) -> List[Break]:
     breaks: List[Break] = []
     pre = int(approach_ms(ar))
-    for prev, nxt in zip(objects, objects[1:]):
-        if nxt.time - prev.end_time >= min_gap_ms:
-            breaks.append(Break(prev.end_time + 200, nxt.time - pre))
+    if not objects:
+        return breaks
+    active_end = objects[0].end_time
+    for nxt in objects[1:]:
+        if nxt.time - active_end >= min_gap_ms:
+            breaks.append(Break(active_end + 200, nxt.time - pre))
+        active_end = max(active_end, nxt.end_time)
     return breaks
 
 
@@ -73,7 +78,7 @@ def apply_shift(objects: List[HitObject], shift_ms: int) -> None:
     """Move every object earlier by shift_ms (in place)."""
     for o in objects:
         o.time -= shift_ms
-        if isinstance(o, Spinner):
+        if isinstance(o, (Spinner, Hold)):
             o.end -= shift_ms
 
 
@@ -87,7 +92,8 @@ def effective_preset(preset: DifficultyPreset, timing: Timing) -> DifficultyPres
 def build_beatmap(preset: DifficultyPreset, timing: Timing, objects: List[HitObject],
                   kiai: List[tuple], audio_filename: str, title: str, artist: str,
                   creator: str, shift_ms: int = OSU_TIMING_SHIFT_MS,
-                  sv_overrides: Sequence[SvOverride] = ()) -> Beatmap:
+                  sv_overrides: Sequence[SvOverride] = (), mode: str = "standard",
+                  mania_model_used: bool = False) -> Beatmap:
     apply_shift(objects, shift_ms)
     tps = [TimingPoint(int(round(timing.offset_ms)) - shift_ms, timing.beat_length, uninherited=True)]
     for start, end in kiai:
@@ -108,11 +114,15 @@ def build_beatmap(preset: DifficultyPreset, timing: Timing, objects: List[HitObj
         tps.append(TimingPoint(end - shift_ms, -100.0 / sv2, uninherited=False, kiai=k2))
     preview = (kiai[0][0] - shift_ms) if kiai else (objects[len(objects) * 2 // 5].time if objects else -1)
     return Beatmap(
-        audio_filename=audio_filename, title=title, artist=artist, version=preset.name, creator=creator,
-        hp=preset.hp, cs=preset.cs, od=preset.od, ar=preset.ar,
+        audio_filename=audio_filename, title=title, artist=artist,
+        version=f"{preset.name} 4K" if mode == "mania4k" else preset.name, creator=creator,
+        hp=preset.hp, cs=4 if mode == "mania4k" else preset.cs, od=preset.od, ar=preset.ar,
         slider_multiplier=preset.slider_multiplier, distance_spacing=preset.spacing,
         preview_time=preview, timing_points=tps,
         breaks=compute_breaks(objects, preset.ar), hit_objects=objects,
+        mode=3 if mode == "mania4k" else 0,
+        tags=("autoosu model-generated mania 4k kanzei" if mania_model_used else
+              "autoosu rules-generated mania 4k kanzei") if mode == "mania4k" else "autoosu ai-generated kanzei",
     )
 
 
@@ -132,6 +142,89 @@ def cached_model(cache: Dict, kind: str, path: str, device: str, loader):
     return cache[key]
 
 
+def _generate_mania4k(audio_path, difficulties: List[str], out_dir, seed: int, title: Optional[str],
+                      artist: Optional[str], creator: str, log, progress: Optional[ProgressFn],
+                      star_rating: Optional[float], bpm: Optional[float] = None,
+                      offset_ms: Optional[float] = None) -> GenerateResult:
+    """osu!mania 4K with the ranked-calibrated engine (autoosu.mania4k)."""
+    from .mania4k.generate import (DIFFICULTIES, OSU_SHIFT_MS, analyse_song, build_beatmap as build_4k,
+                                   generate_chart, load_models, rules_for)
+    from .mania4k.chart import main_bpm
+    from .mania4k.verify import verify_chart
+
+    t0 = _time.perf_counter()
+    audio_path, out_dir = Path(audio_path), Path(out_dir)
+    for d in difficulties:
+        if d not in DIFFICULTIES and get_preset(d).name not in DIFFICULTIES:
+            raise ValueError(f"unknown difficulty {d!r}")
+    names = [d if d in DIFFICULTIES else get_preset(d).name for d in difficulties]
+    if not names:
+        raise ValueError("Choose at least one difficulty")
+    report = progress or (lambda f, m: None)
+    report(0.0, "load")
+    log(f"[1/4] loading {audio_path.name}")
+    y, sr = load_audio(audio_path)
+    report(0.05, "analyse")
+    log(f"[2/4] analysing audio ({len(y) / sr:.1f} s): beat tracker, onsets")
+    # a user offset is given in osu! time; the engine works in audio time
+    an = analyse_song(audio_path, y, sr, bpm=bpm,
+                      offset_ms=None if offset_ms is None else offset_ms + OSU_SHIFT_MS)
+    tm = an.timing
+    bpm = main_bpm(tm.red_lines, an.duration_ms)
+    report(0.3, "timing")
+    changes = "" if len(tm.red_lines) == 1 else ", tempo changes at " + ", ".join(
+        f"{r.time / 1000:.1f}s ({r.bpm:g})" for r in tm.red_lines[1:6])
+    log(f"[3/4] timing: main BPM {bpm:g}, {len(tm.red_lines)} red line(s){changes} "
+        f"(written {OSU_SHIFT_MS:g} ms early, ranked osu! convention)")
+    meta_title, meta_artist = read_metadata(audio_path)
+    title, artist = title or meta_title, artist or meta_artist
+    workdir = out_dir / ".work"
+    audio_file = prepare_audio(audio_path, workdir)
+    background = None
+    cover = extract_cover(audio_path)
+    if cover:
+        background = prepare_background(cover[0], cover[1], workdir)
+    elif audio_path.suffix.lower() in VIDEO_EXTS:
+        from .audio_io import extract_video_frame
+
+        background = extract_video_frame(audio_path, workdir / "bg.jpg")
+    log("[4/4] generating difficulties")
+    models = load_models()
+    diffs: List[DiffResult] = []
+    prev_stars: Optional[float] = None
+    for i, name in enumerate(sorted(names, key=lambda n: DIFFICULTIES[n])):
+        report(0.35 + 0.6 * i / len(names), f"{name}: notes")
+        target = star_rating if (star_rating is not None and len(names) == 1) else DIFFICULTIES[name]
+        chart, rep = generate_chart(an, name, target, seed=seed * 1000 + i, models=models)
+        if (prev_stars is not None and target - rep.stars > 0.5 and rep.stars - prev_stars < 0.4):
+            log(f"      {name:<7} skipped: the song only supports {rep.stars:.2f}* without overmapping "
+                f"(target {target:.2f}), too close to the previous difficulty")
+            continue
+        prev_stars = rep.stars
+        chart.version = f"{name} 4K"
+        check = verify_chart(chart, an.features.env, rules_for(target))
+        if not check.ok:
+            raise RuntimeError(f"{name}: generated chart failed verification ({', '.join(check.problems)})")
+        bm = build_4k(an, chart, audio_file.name, title, artist, creator, OSU_SHIFT_MS,
+                      background.name if background else "", stars=rep.stars)
+        preset = dataclasses.replace(get_preset(name) if name != "Expert" else get_preset("Insane"), name=name,
+                                     od=chart.od, hp=chart.hp, cs=4, star=rep.stars)
+        res = DiffResult(preset, [], bm)
+        diffs.append(res)
+        s = res.summary()
+        log(f"      {name:<7} {rep.stars:4.2f}* (target {target:.2f})  {s['objects']:4d} notes "
+            f"({s['circles']} taps, {s['holds']} holds) {s['nps']:.2f} notes/s  OD {chart.od:g} HP {chart.hp:g}  verified")
+    if not diffs:
+        raise RuntimeError("no difficulty could be generated for this song")
+    report(0.97, "package")
+    osz = write_osz([d.beatmap for d in diffs], audio_file, out_dir, extra_files=[background] if background else ())
+    report(1.0, "done")
+    first = tm.red_lines[0]
+    return GenerateResult(osz=osz, audio_file=audio_file, timing=Timing(bpm, first.time), analysis=None,
+                          diffs=diffs, elapsed_s=_time.perf_counter() - t0, osu_shift_ms=int(round(OSU_SHIFT_MS)),
+                          device="cpu")
+
+
 def generate(audio_path: str | Path, difficulties: List[str], out_dir: str | Path = "out",
              seed: int = 0, bpm: Optional[float] = None, offset_ms: Optional[float] = None,
              title: Optional[str] = None, artist: Optional[str] = None,
@@ -140,12 +233,30 @@ def generate(audio_path: str | Path, difficulties: List[str], out_dir: str | Pat
              density_bias: float = 0.0, star_rating: Optional[float] = None, decode_steps: int = 12,
              coord_model: Optional[str] = None, coord_steps: int = 100, cfg_scale: float = 1.0,
              device: Optional[str] = None, progress: Optional[ProgressFn] = None,
-             model_cache: Optional[Dict] = None) -> GenerateResult:
+             model_cache: Optional[Dict] = None, mode: str = "standard",
+             mania_model: Optional[str] = None, mania_device: str = "auto",
+             mania_target_nps: Optional[float] = None,
+             mania_threshold: Optional[float] = None,
+             mania_engine: str = "ranked") -> GenerateResult:
     """Analyse a song and write one .osz with the requested difficulties.
 
     rhythm_model / coord_model: paths to the trained models; without them the rule-based layers run.
+    mania_engine (mode mania4k): "ranked" (default) is the ranked-calibrated engine in autoosu.mania4k
+    (exact multi-red-line timing, note and pattern models learned from ranked 4K charts, star-rating
+    calibration); "rules" is the earlier rule-based generator. --mania-model always uses its checkpoint.
     progress(fraction, message) is called as work advances (for GUIs); log(text) gets the human summary.
     """
+    if mode not in ("standard", "mania4k"):
+        raise ValueError(f"Unknown game mode {mode!r}; choose standard or mania4k")
+    if mode == "mania4k" and (rhythm_model or coord_model):
+        raise ValueError("standard rhythm/coordinate checkpoints cannot generate mania 4K")
+    if mode != "mania4k" and mania_model:
+        raise ValueError("--mania-model requires --mode mania4k")
+    if mania_engine not in ("ranked", "rules"):
+        raise ValueError(f"Unknown mania engine {mania_engine!r}; choose ranked or rules")
+    if mode == "mania4k" and not mania_model and mania_engine == "ranked":
+        return _generate_mania4k(audio_path, difficulties, out_dir, seed, title, artist, creator, log,
+                                 progress, star_rating, bpm, offset_ms)
     t0 = _time.perf_counter()
     audio_path, out_dir = Path(audio_path), Path(out_dir)
     presets = [get_preset(d) for d in difficulties]
@@ -153,6 +264,14 @@ def generate(audio_path: str | Path, difficulties: List[str], out_dir: str | Pat
         raise ValueError("Choose at least one difficulty")
     dev = pick_device(device) if (rhythm_model or coord_model) else "cpu"
     cache = model_cache if model_cache is not None else {}
+    mania_net = mania_ckpt = None
+    if mania_model:
+        from .ml.mania_infer import choose_device
+        from .ml.mania_model import ManiaNet
+
+        dev = choose_device(mania_device)
+        mania_net, mania_ckpt = cached_model(cache, "mania4k", mania_model, dev,
+                                            ManiaNet.from_checkpoint)
     report = progress or (lambda f, m: None)
 
     report(0.0, "load")
@@ -201,17 +320,39 @@ def generate(audio_path: str | Path, difficulties: List[str], out_dir: str | Pat
         report(0.25, "load coordinate model")
         cm = cached_model(cache, "coord", coord_model, dev, load_coord_model)
         log(f"      coordinate model {Path(coord_model).name} on {dev}")
+    if mania_net is not None:
+        from .ml.sample import song_mel_uint8
+
+        mel = song_mel_uint8(audio_path)
+        log(f"      dedicated mania 4K model {Path(mania_model).name} on {dev}")
 
     log("[4/4] generating difficulties")
     diffs: List[DiffResult] = []
     span = 0.68 / max(1, len(presets))
     for i, preset in enumerate(presets):
         base = 0.28 + i * span
-        preset = effective_preset(preset, timing)
+        preset = effective_preset(preset, timing) if mode == "standard" else preset
         star = star_rating if star_rating is not None else preset.star
         rng = np.random.default_rng(seed * 1000 + i)
         report(base, f"{preset.name}: rhythm")
-        if model is not None:
+        if mode == "mania4k":
+            if mania_net is not None:
+                from .ml.mania_infer import generate_model_objects
+
+                events, objects = generate_model_objects(
+                    mel, timing, analysis.duration * 1000, preset, sections,
+                    mania_net, mania_ckpt, dev, osu_shift_ms,
+                    target_nps=mania_target_nps, threshold=mania_threshold,
+                    seed=seed * 1000 + i)
+            else:
+                from .mania import build_mania_objects
+
+                events, objects = build_mania_objects(
+                    analysis, timing, preset, rng, sections,
+                    min_time_ms=max(0, osu_shift_ms),
+                    max_time_ms=int(analysis.duration * 1000) + min(0, osu_shift_ms),
+                )
+        elif model is not None:
             from .ml.sample import generate_rhythm
 
             events = generate_rhythm(model, mel, timing, preset, analysis, sections, star_rating=star,
@@ -221,7 +362,9 @@ def generate(audio_path: str | Path, difficulties: List[str], out_dir: str | Pat
             events = build_events(analysis, timing, preset, rng, sections)
         sv_sections = [(a, b, preset.kiai_sv) for a, b in kiai]
         overrides: List[SvOverride] = []
-        if cm is not None:
+        if mode == "mania4k":
+            pass
+        elif cm is not None:
             from .ml.coord_infer import place_with_model
 
             def coord_progress(f: float, msg: str, _b=base, _n=preset.name) -> None:
@@ -233,14 +376,16 @@ def generate(audio_path: str | Path, difficulties: List[str], out_dir: str | Pat
         else:
             objects = place(events, preset, timing, rng, sv_sections)
         bm = build_beatmap(preset, timing, objects, kiai, audio_file.name, title, artist, creator, osu_shift_ms,
-                           sv_overrides=overrides)
+                           sv_overrides=overrides, mode=mode, mania_model_used=mania_net is not None)
         if background:
             bm.background = background.name
         res = DiffResult(preset, events, bm)
         diffs.append(res)
         s = res.summary()
+        detail = (f"{s['circles']} taps, {s['holds']} holds" if mode == "mania4k" else
+                  f"{s['circles']} circles, {s['sliders']} sliders, {s['spinners']} spinners")
         log(f"      {preset.name:<7} {s['objects']:4d} objects "
-            f"({s['circles']} circles, {s['sliders']} sliders, {s['spinners']} spinners) "
+            f"({detail}) "
             f"{s['nps']:.2f} obj/s" + (f", {len(overrides)} slider(s) shortened" if overrides else ""))
 
     report(0.97, "package")
