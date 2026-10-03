@@ -5,6 +5,25 @@ Dependencies are supplied by mania4k_source.py without importing models/audio.
 """
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+
+# These dependencies are supplied by mania4k_source.namespace during AST execution.
+# Static declarations keep the unchanged source fixture visible to lint without
+# importing models, audio or their runtime dependencies in synthetic tests.
+if TYPE_CHECKING:
+    import bisect
+    import numpy as np
+    from autoosu.mania4k.chart import Chart
+    from autoosu.mania4k.features import DIV_CLASSES
+    from autoosu.mania4k.generate import (
+        DIFFICULTIES, ChartReport, Row, Rules, SongAnalysis, assign_lanes,
+        chart_to_osu_text, consistent_snaps, load_models, note_probabilities,
+        rules_for, star_rating,
+    )
+    from autoosu.mania4k.model import LN_BINS, NoteNet
+    from autoosu.mania4k.patterns import PatternNet
+    from autoosu.mania4k.timing import Segment
+
 def snap_bpm(period: float, n_beats: int, tol_ms: float = 2.0) -> float:
     """Simplest BPM whose accumulated drift over half the segment stays below tol_ms."""
     bpm = 60000.0 / period
