@@ -15,7 +15,7 @@ from .models import MODELS, ensure_model, find_model
 def _engine_kwargs(args) -> dict:
     if args.mode != "mania4k":
         return {}
-    return {"mania_engine": args.mania_engine}
+    return {"mania_engine": args.mania_engine, "mania_style": args.mania_style}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -55,6 +55,9 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--mania-engine", choices=("ranked", "rules"), default="ranked",
                    help="mania4k: ranked = exact timing + note/pattern models learned from ranked 4K charts "
                         "(default); rules = the earlier rule-based generator")
+    g.add_argument("--mania-style", choices=("auto", "stream", "jack", "ln", "hybrid"), default="auto",
+                   help="mania4k ranked engine: chart style (切 stream / 叠 jack / LN / hybrid); auto picks one "
+                        "per song from the star rating and how sustained the music is")
     g.add_argument("--mania-stars", type=float,
                    help="mania4k ranked engine: star rating to calibrate a single difficulty to")
     g.add_argument("--mania-model", help="dedicated trained mania 4K checkpoint (.pt)")
@@ -130,7 +133,7 @@ def main(argv=None) -> int:
                    "--coord-steps", "--cfg-scale", "--star"}
     supplied = sys.argv[1:] if argv is None else argv
     mania_flags = {"--mania-model", "--mania-device", "--mania-target-nps", "--mania-threshold"}
-    engine_flags = {"--mania-engine", "--mania-stars"}
+    engine_flags = {"--mania-engine", "--mania-stars", "--mania-style"}
     if args.mode != "mania4k" and any(arg.split("=", 1)[0] in mania_flags | engine_flags for arg in supplied):
         print("error: dedicated mania model options require --mode mania4k", file=sys.stderr)
         return 2

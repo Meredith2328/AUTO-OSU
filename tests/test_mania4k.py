@@ -145,3 +145,51 @@ def test_ranked_engine_end_to_end(tmp_path, monkeypatch):
         # every note on the 1/4 or 1/3 grid of the red line
         assert all(snap_of(c.red_lines, n.time, (1, 2, 4, 3, 6), 1.0) is not None for n in c.notes)
     assert any("verified" in line for line in seen)
+
+
+def _rows_to_notes(rows, beat_ms=250.0, t0=1000.0):
+    """rows: list of lane masks, one per 1/4 beat; returns (time, lane, end) notes."""
+    out = []
+    for i, m in enumerate(rows):
+        for l in range(4):
+            if m >> l & 1:
+                out.append((t0 + i * beat_ms / 4 * 2, l, 0.0))
+    return out
+
+
+def test_pattern_types_are_recognised():
+    from autoosu.mania4k.structure import chart_profile
+
+    reds = [RedLine(1000.0, 500.0)]
+    cases = {
+        "roll": [1, 2, 4, 8, 4, 2, 1, 2, 4, 8, 4, 2, 1, 2, 4, 8] * 4,
+        "trill": [1, 2] * 32,
+        "chordjack": [3, 7, 3, 14, 6, 7, 3, 11] * 8,
+        "jumpstream": [5, 2, 8, 1, 10, 4, 1, 8] * 8,
+    }
+    for want, masks in cases.items():
+        p = chart_profile(_rows_to_notes(masks), reds)
+        active = [t for t in p["types"] if t != "light"]
+        assert max(set(active), key=active.count) == want, (want, active)
+
+
+def test_archetype_and_plan_follow_the_tables():
+    import numpy as np
+
+    from autoosu.mania4k.planner import Section, choose_archetype, make_plan
+    from autoosu.mania4k.structure import ARCHETYPES, TYPES, chart_archetype
+
+    assert chart_archetype(["ln"] * 6 + ["stream"] * 2) == "LN"
+    assert chart_archetype(["chordjack"] * 4 + ["jumpstream"] * 6) == "叠"
+    assert chart_archetype(["stream"] * 5 + ["jumpstream"] * 4 + ["mixed"]) == "切"
+    assert ARCHETYPES[choose_archetype(1.5, "jack")] == "切"       # no jack charts below 2 stars
+    assert ARCHETYPES[choose_archetype(4.0, "ln")] == "LN"
+    secs = [Section(i * 8000.0, (i + 1) * 8000.0, 8, e, lv) for i, (e, lv) in
+            enumerate([(-1.5, 0), (0.0, 2), (1.5, 3), (-0.5, 1)] * 3)]
+    plan = make_plan(secs, ARCHETYPES.index("LN"), np.random.default_rng(0))
+    types = [TYPES[s.type] for s in plan.sections]
+    assert types.count("ln") >= len(types) // 2                  # an LN chart is mostly LN
+    rest = [s.density for s in plan.sections if s.level == 0]
+    peak = [s.density for s in plan.sections if s.level == 3]
+    assert max(rest) < min(peak)                                  # quiet sections sparser than climaxes
+    assert all(TYPES[s.type] != "light" for s in plan.sections if s.level >= 2)

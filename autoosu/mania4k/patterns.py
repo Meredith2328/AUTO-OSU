@@ -20,7 +20,9 @@ HISTORY = 8
 MASKS = list(range(16))
 POPCOUNT = np.array([bin(m).count("1") for m in MASKS])
 MIRROR = np.array([int(f"{m:04b}"[::-1], 2) for m in MASKS])   # lane l -> 3 - l
-FEAT_DIM = 4 + 2 + 4 + 4 + 1 + HISTORY * 5 + 1
+N_STYLES = 10          # structure.TYPES: the planned pattern type of the row's section
+N_ARCH = 4             # structure.ARCHETYPES: the chart's overall style
+FEAT_DIM = 4 + 2 + 4 + 4 + 1 + HISTORY * 5 + 1 + N_STYLES + N_ARCH
 
 
 def lanes_of(mask: int) -> List[int]:
@@ -40,7 +42,8 @@ class RowState:
         return RowState(np.full(4, -1e9), np.full(4, -1e9), [])
 
 
-def row_features(state: RowState, t: float, k: int, is_ln: bool, beat_ms: float, stars: float) -> np.ndarray:
+def row_features(state: RowState, t: float, k: int, is_ln: bool, beat_ms: float, stars: float,
+                 style: int = 1, arch: int = 0) -> np.ndarray:
     gap = 5000.0 if state.last_time is None else t - state.last_time
     f = np.zeros(FEAT_DIM, np.float32)
     f[k - 1] = 1.0
@@ -58,6 +61,8 @@ def row_features(state: RowState, t: float, k: int, is_ln: bool, beat_ms: float,
             f[o + 4] = math.log1p(min(g, 5000.0)) / 8.5
         o += 5
     f[o] = stars / 4.0
+    f[o + 1 + style] = 1.0
+    f[o + 1 + N_STYLES + arch] = 1.0
     return f
 
 

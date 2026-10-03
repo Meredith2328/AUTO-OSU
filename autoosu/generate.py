@@ -145,7 +145,7 @@ def cached_model(cache: Dict, kind: str, path: str, device: str, loader):
 def _generate_mania4k(audio_path, difficulties: List[str], out_dir, seed: int, title: Optional[str],
                       artist: Optional[str], creator: str, log, progress: Optional[ProgressFn],
                       star_rating: Optional[float], bpm: Optional[float] = None,
-                      offset_ms: Optional[float] = None) -> GenerateResult:
+                      offset_ms: Optional[float] = None, style: str = "auto") -> GenerateResult:
     """osu!mania 4K with the ranked-calibrated engine (autoosu.mania4k)."""
     from .mania4k.generate import (DIFFICULTIES, OSU_SHIFT_MS, analyse_song, build_beatmap as build_4k,
                                    generate_chart, load_models, rules_for)
@@ -190,12 +190,23 @@ def _generate_mania4k(audio_path, difficulties: List[str], out_dir, seed: int, t
         background = extract_video_frame(audio_path, workdir / "bg.jpg")
     log("[4/4] generating difficulties")
     models = load_models()
+    from .mania4k.generate import note_probabilities
+    from .mania4k.planner import choose_archetype
+    from .mania4k.structure import ARCHETYPES
+
+    # one chart style (archetype) for the whole set, decided at Hard level; 叠 is not used below 2*
+    probs = note_probabilities(an, models[0], DIFFICULTIES["Hard"])
+    p_note = 1.0 - probs["count"][:, 0]
+    top = p_note >= np.percentile(p_note, 90)
+    set_arch = choose_archetype(DIFFICULTIES["Hard"], style, float(probs["ln"][top].mean()) if top.any() else 0.0)
+    log(f"      chart style: {ARCHETYPES[set_arch]}" + (" (auto)" if style == "auto" else ""))
     diffs: List[DiffResult] = []
     prev_stars: Optional[float] = None
     for i, name in enumerate(sorted(names, key=lambda n: DIFFICULTIES[n])):
         report(0.35 + 0.6 * i / len(names), f"{name}: notes")
         target = star_rating if (star_rating is not None and len(names) == 1) else DIFFICULTIES[name]
-        chart, rep = generate_chart(an, name, target, seed=seed * 1000 + i, models=models)
+        arch = set_arch if not (target < 2.0 and ARCHETYPES[set_arch] == "叠") else ARCHETYPES.index("切")
+        chart, rep = generate_chart(an, name, target, seed=seed * 1000 + i, models=models, archetype=arch)
         if (prev_stars is not None and target - rep.stars > 0.5 and rep.stars - prev_stars < 0.4):
             log(f"      {name:<7} skipped: the song only supports {rep.stars:.2f}* without overmapping "
                 f"(target {target:.2f}), too close to the previous difficulty")
@@ -214,6 +225,7 @@ def _generate_mania4k(audio_path, difficulties: List[str], out_dir, seed: int, t
         s = res.summary()
         log(f"      {name:<7} {rep.stars:4.2f}* (target {target:.2f})  {s['objects']:4d} notes "
             f"({s['circles']} taps, {s['holds']} holds) {s['nps']:.2f} notes/s  OD {chart.od:g} HP {chart.hp:g}  verified")
+        log(f"              sections: {rep.plan}")
     if not diffs:
         raise RuntimeError("no difficulty could be generated for this song")
     report(0.97, "package")
@@ -237,7 +249,7 @@ def generate(audio_path: str | Path, difficulties: List[str], out_dir: str | Pat
              mania_model: Optional[str] = None, mania_device: str = "auto",
              mania_target_nps: Optional[float] = None,
              mania_threshold: Optional[float] = None,
-             mania_engine: str = "ranked") -> GenerateResult:
+             mania_engine: str = "ranked", mania_style: str = "auto") -> GenerateResult:
     """Analyse a song and write one .osz with the requested difficulties.
 
     rhythm_model / coord_model: paths to the trained models; without them the rule-based layers run.
@@ -256,7 +268,7 @@ def generate(audio_path: str | Path, difficulties: List[str], out_dir: str | Pat
         raise ValueError(f"Unknown mania engine {mania_engine!r}; choose ranked or rules")
     if mode == "mania4k" and not mania_model and mania_engine == "ranked":
         return _generate_mania4k(audio_path, difficulties, out_dir, seed, title, artist, creator, log,
-                                 progress, star_rating, bpm, offset_ms)
+                                 progress, star_rating, bpm, offset_ms, mania_style)
     t0 = _time.perf_counter()
     audio_path, out_dir = Path(audio_path), Path(out_dir)
     presets = [get_preset(d) for d in difficulties]
