@@ -12,7 +12,7 @@ attacks land on the 1/4 grid. The pipeline:
 3. A windowed scan finds stretches whose onsets fall off that grid. Each stretch is refitted on
    its own; if a different tempo explains it clearly better, the song gets a tempo change there.
    (Live recordings whose tempo drifts continuously are out of scope: they keep the best constant grid.)
-4. BPMs are snapped to the simplest value (integer, .5, .25 ...) whose drift over the segment
+4. BPMs are snapped to the simplest value (integer, .5, .25 ...) whose drift over half the segment
    stays below 2 ms, and every red line sits on a downbeat.
 
 The engine is audited against human red lines of ranked maps by ``scripts/mania4k_eval_timing.py``.
@@ -182,10 +182,13 @@ def snap_bpm(period: float, n_beats: int, tol_ms: float = 2.0) -> float:
     bpm = 60000.0 / period
     for q in (1.0, 0.5, 0.25, 0.2, 0.1, 0.05, 0.01):
         cand = round(bpm / q) * q
-        budget = 5.0 * tol_ms if q == 1.0 else tol_ms      # DAW-made songs have integer BPMs
+        budget = tol_ms      # Every simplification obeys the stated drift budget.
         if abs(60000.0 / cand - period) * max(1, n_beats) / 2.0 <= budget:
             return cand
-    return round(bpm, 3)
+    cand = round(bpm, 3)
+    if abs(60000.0 / cand - period) * max(1, n_beats) / 2.0 <= tol_ms:
+        return cand
+    return bpm
 
 
 # --------------------------------------------------------------------------- metrical position
@@ -468,7 +471,7 @@ def estimate_timing(env: OnsetEnvelopes, beat_logit: np.ndarray, down_logit: np.
         if len(split) > 1:
             split = [_copy_global(s, glob) if _is_global(s, glob) else _finish(s, o, w, act, down, meter)
                      for s in split]
-            # a piece that snapped back onto the global tempo and (nearly) its phase is the global grid
+            # Fold only identical grids; preserve accepted phase changes.
             split = [_copy_global(s, glob) if _near_global(s, glob) else s for s in split]
             split = _merge_exact(split)
             tot = _total_rate(o[strong], w[strong], split)
@@ -498,11 +501,9 @@ def _is_global(s: Segment, glob: Segment) -> bool:
     return abs(s.period - glob.period) < 1e-9 and abs(s.phase - glob.phase) < 1e-9
 
 
-def _near_global(s: Segment, glob: Segment, tol_ms: float = 10.0) -> bool:
-    if abs(s.period - glob.period) > 1e-6:
-        return False
-    d = (s.phase - glob.phase) / (glob.period / 4)
-    return abs(d - round(d)) * glob.period / 4 <= tol_ms
+def _near_global(s: Segment, glob: Segment) -> bool:
+    # A phase change accepted by segmentation must not be folded away.
+    return _is_global(s, glob)
 
 
 def _copy_global(s: Segment, glob: Segment) -> Segment:
