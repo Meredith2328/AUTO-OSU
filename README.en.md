@@ -1,265 +1,51 @@
-# AUTO-OSU
+# AUTO-OSU · osu!mania 4K
 
-[![release](https://img.shields.io/github/v/release/kanze1/AUTO-OSU?label=download&color=e6a93c)](https://github.com/kanze1/AUTO-OSU/releases)
-[![stars](https://img.shields.io/github/stars/kanze1/AUTO-OSU?style=flat&color=e6a93c)](https://github.com/kanze1/AUTO-OSU/stargazers)
-[![tests](https://github.com/kanze1/AUTO-OSU/actions/workflows/test.yml/badge.svg)](https://github.com/kanze1/AUTO-OSU/actions/workflows/test.yml)
-[![license](https://img.shields.io/badge/license-MIT%20%2B%20attribution-4fb8ff)](LICENSE)
+[中文](README.md) · [Design & evaluation](docs/mania4k_engine.md) · [Original README (osu!standard)](docs/original/README.en.md)
 
-**Drop in a song, get a playable osu!standard or osu!mania 4K beatmap a minute later.**
+**Drop in a song, get an osu!mania 4K beatmap that is on the beat and calibrated to a star rating.**
 
-[中文](README.md) · [Download](https://github.com/kanze1/AUTO-OSU/releases) · [How to use](#how-to-use) · [Quality and limits](#quality-and-limits) · [How it works](#how-it-works) · [FAQ](#faq)
+This repository is a fork of [kanze1/AUTO-OSU](https://github.com/kanze1/AUTO-OSU), which generates **osu!standard** maps (rhythm transformer + coordinate diffusion, desktop GUI, Windows exe). All of that still works; see the [original README](docs/original/README.en.md). This fork focuses on **osu!mania 4K**.
 
-![AUTO-OSU main window](docs/screenshot_zh.png)
-
-<details>
-<summary>Light theme / batch results</summary>
-
-![light theme](docs/screenshot_en.png)
-
-![batch results](docs/screenshot_busy.png)
-
-</details>
-
-## Why this exists
-
-I am bad at osu! and I love playing it. The worst part: the songs I want to play have no maps, and I can't map.
-So: AUTO-OSU. Drop in the song you like, and a minute later you can play it.
-
-This is v0, and it already makes maps I am happy to play all the way through: the rhythm sits on the drums,
-the jumps and streams are learned from over a hundred thousand ranked maps, and all four difficulties come out in one go.
-It will keep getting better: mapper intent, deliberate highlights, longer sliders and multiple red lines for tempo changes
-are all on the roadmap.
-
-If you are also someone who "just wants to play that one song", take it, open issues, improve it with me.
-If it helps you, a ⭐ **star** means a lot. — kanzei
-
-## How to use
-
-### No install (Windows)
-
-1. Download `AUTO-OSU-<version>-win64-cpu.zip` from [Releases](https://github.com/kanze1/AUTO-OSU/releases) (models included) and unzip it anywhere.
-2. Run `AUTO-OSU.exe`.
-3. Drag a song onto the window, tick difficulties, click **Generate**.
-4. The `.osz` is written to the `output` folder next to the exe and, by default, opened in osu! (it imports itself). Open osu! and it is in the song list.
-
-The game mode defaults to **osu!standard**, preserving the existing behaviour. Select **osu!mania 4K (ranked-calibrated)** for a four-key map from the dedicated 4K engine: exact (multi-)red-line timing, note and lane-pattern models learned from ranked 4K charts, and difficulties calibrated with osu!'s star-rating algorithm. Every note is on the beat grid and on an audible attack, and every chart is verified before it is written. The earlier rule-based generator (`--mania-engine rules`) and `--mania-model` remain available; standard-only models are never presented as mania models.
-
-No GPU needed: a 3-minute song, one difficulty, takes about a minute on a modern CPU (70 s measured on 16 cores; 16 s on an RTX 4090).
-Windows 10 / 11, 64-bit.
-
-### Set up GPU acceleration
-
-Click **Set up GPU acceleration** under Device. The app prepares uv, a separate Python 3.12, and a CUDA-enabled PyTorch selected for your driver. After an actual CUDA operation succeeds, the runtime is ready immediately, without restarting the window.
-
-- No existing Python, uv, or CUDA Toolkit installation is needed. An NVIDIA GPU and its driver are required.
-- The first download is several GB. Progress and installer logs appear in the window, and setup can be cancelled.
-- The runtime lives in `%LOCALAPPDATA%\AUTO-OSU\runtime` and leaves your system Python alone. A failed repair keeps the previous working runtime active.
-- `auto` prefers an available GPU; `cpu` always uses CPU; an explicit `cuda` selection reports a clear error when unavailable.
-
-### Generate a whole folder
-
-Select **Folder batch**, browse or drop a directory, optionally enable **Include subfolders**, and click **Generate batch**. Supported audio and video files appear in the processing queue.
-
-Each song has its own output folder, so duplicate filenames cannot overwrite one another. A damaged file is recorded and the next file is processed. A `batch-report-*.json` records outputs, errors, and the device used. **Stop after current** finishes the active song and cancels the remaining queue. Import the generated `.osz` files into osu! when you are ready.
-
-### Which audio works
-
-Input is normalised before it enters the pipeline, so the format hardly matters:
-
-- audio: mp3, ogg, wav, flac, m4a / aac, wma, opus, aiff, ape, alac …
-- video: mp4, mkv, webm, mov, avi … — the audio track is extracted automatically
-- the audio packed into the `.osz` is always something osu! can play: mp3 and ogg-vorbis are kept as they are; anything else becomes mp3 at a bit rate that follows the source (lossless -> 320 kbps, lossy -> the source rate rounded up, 192 kbps minimum)
-- embedded cover art becomes the beatmap background; for a video without cover art a frame is grabbed. Title and artist come from the tags
-
-ffmpeg ships with the program; nothing to install.
-
-### The window
-
-| Area | What it does |
-| --- | --- |
-| Song | Single song / Folder batch, drag and drop or Browse, with a processing queue. |
-| Game mode | osu!standard by default, or osu!mania 4K (ranked-calibrated engine). |
-| Difficulties | Easy / Normal / Hard / Insane, any combination, all packed into one `.osz`. Default Hard + Insane. |
-| Output | Target folder; "Import into osu! when done" opens the `.osz`, same as double-clicking it. |
-| Models | Shows whether the models are present; one-click download if not (checksums verified). |
-| Device | Actual CUDA availability, GPU and memory, plus Recheck and automatic GPU setup. |
-| Cover | Chinese / English, light / dark. Settings, last song and folder are remembered. |
-
-**Advanced options** (click "Advanced options"):
-
-| Option | Meaning |
-| --- | --- |
-| Seed | Another number gives another layout for the same song; the same seed reproduces the same map. |
-| BPM / offset | Blank = detected. Fill in by hand when detection is off (tempo changes, near-empty intros). Offset in ms. |
-| Creator name | Written into the `.osu` as Creator, default AUTO-OSU. |
-| Star rating | Difficulty hint for the models; blank = per-difficulty default: Easy 2.0 / Normal 3.2 / Hard 4.5 / Insane 5.5. Raise it for a denser Hard. |
-| Placement quality | Diffusion steps of the coordinate model: fast 50 / standard 100 / fine 200. Standard is plenty. |
-| Engine | "AI models" is the normal mode; "rules only" needs no models and maps in seconds — for comparison or when models are missing. |
-| Preview mp3 | Also saves an mp3 with the song turned down and a click on every object, to check the rhythm without opening osu!. |
-
-### Command line
-
-`python -m autoosu SONG [options]`; the exe accepts the same arguments (`AUTO-OSU.exe song.mp3 -d Hard`).
-
-```powershell
-python -m autoosu --setup-runtime
-python -m autoosu --check-cuda
-python -m autoosu "D:\Music" --recursive -d Hard Insane -o "D:\Beatmaps"
-python -m autoosu "D:\Music\song.mp3" --mode mania4k -d Hard --seed 42 -o "D:\Beatmaps"
-```
-
-| Option | Meaning |
-| --- | --- |
-| `--mode standard\|mania4k` | game mode; defaults to `standard`. `mania4k` uses the ranked-calibrated engine |
-| `--mania-engine ranked\|rules` | mania 4K engine: `ranked` (default, see [docs/mania4k_engine.md](docs/mania4k_engine.md)) or the earlier rules |
-| `--mania-stars X` | ranked engine: calibrate a single difficulty to this star rating (e.g. `-d Hard --mania-stars 3.5`) |
-| `--mania-model PATH` | generate with a locally trained dedicated mania 4K checkpoint; the GUI still uses rules |
-| `--mania-device auto\|mps\|cpu` | mania inference device; auto prefers MPS on Mac |
-| `--mania-target-nps X` / `--mania-threshold X` | optionally override the difficulty condition or validation-calibrated onset threshold |
-| `-d Easy Normal Hard Insane` | difficulties to generate |
-| `-o DIR` | output folder, default `out` |
-| `--seed N` | random seed |
-| `--bpm` / `--offset` | manual BPM / red-line offset (ms) |
-| `--title` / `--artist` / `--creator` | override metadata (default: audio tags, or an "Artist - Title" file name) |
-| `--star X` | star-rating condition |
-| `--coord-steps N` | diffusion steps, default 100 |
-| `--cfg-scale X` | classifier-free guidance of the coordinate model, default 1.0 |
-| `--temperature` / `--density` / `--density-bias` / `--decode-steps` | rhythm-model sampling: temperature, target objects per measure, "no note" bias (negative = denser), decoding rounds |
-| `--device auto\|cuda\|cpu` | compute device |
-| `--setup-runtime` | install and verify an app-managed GPU runtime with uv |
-| `--check-cuda` | check the effective inference runtime, including the managed environment |
-| `--recursive` | include subfolders when the input is a directory |
-| `--rules` | rule-based mode |
-| `--rhythm-model` / `--coord-model` | explicit model files; otherwise looked up in `models/` |
-| `--no-coord-model` | rhythm model only, rule-based placement |
-| `--download` | fetch missing models from the GitHub release |
-| `--osu-shift 26` | how many ms early objects are written into the `.osu` |
-| `--preview` | also write the preview mp3 |
-| `--debug-plot` | save an analysis image: loudness and kiai sections, onsets and beat grid, chosen notes per difficulty |
-| `--dump-events` | print every object with time, type and beat |
-
-`mania4k` uses the ranked-calibrated engine by default (CPU is fine; the first run downloads the 80 MB Beat This! tracker weights, or put `beat_this-final0.ckpt` into the models folder). `--mania-engine rules` selects the earlier rules; with `--mania-model` the experimental checkpoint predicts onsets, chords, and hold lengths. Standard-only options (including `--device`) are rejected in mania mode, and mania options are rejected in standard mode.
-
-Local experimental training (Python 3.10+, PyTorch, and audio dependencies; input consists of **real local** mania 4K `.osz` files and audio is never uploaded):
+## Use
 
 ```bash
-python -m autoosu.ml.mania_data --input /path/to/osz --out /path/to/prepared --seed 42
-python -m autoosu.ml.mania_train --data /path/to/prepared --out /path/to/mania4k.pt --device auto --seed 42 --steps 3000 --batch 2 --length 128 --eval-every 200 --patience 4
-python -m autoosu.ml.mania_eval --data /path/to/prepared --checkpoint /path/to/mania4k.pt --split val --out /path/to/val.json
-python -m autoosu song.ogg --mode mania4k --mania-model /path/to/mania4k.pt -d Hard -o /path/to/output
+pip install -e .                       # Python 3.10+, CPU is fine
+python -m autoosu song.mp3 --mode mania4k -d Easy Normal Hard Insane Expert -o out
+python -m autoosu song.mp3 --mode mania4k -d Hard --mania-stars 3.5     # a specific star rating
+python -m autoosu                       # GUI; pick "osu!mania 4K" as the game mode
 ```
 
-Preparation groups charts with the same artist/title or audio hash into one train/val/test split and keeps real 4K notes on a 1/8-beat grid. Tune the threshold on val, then evaluate test only once; the report separates original note-head timing from quantized-grid F1. The trained checkpoint is not bundled with the application or the existing standard model download. Automatically estimated BPM/offset can differ from the source map, so inspect generated maps before sharing.
+The result is an `.osz` that osu!/lazer imports on double-click. The first run downloads the 80 MB beat-tracker weights (or put `beat_this-final0.ckpt` into `models/`). A 3-minute song with five difficulties takes 1–2 minutes on one CPU thread.
 
-### Python install
+## What it does
 
-```bash
-git clone https://github.com/kanze1/AUTO-OSU
-cd AUTO-OSU
-python -m venv .venv && .venv\Scripts\activate       # Windows; Linux/macOS: source .venv/bin/activate
-pip install -e .[gui]
-python -m autoosu --setup-runtime                     # optional: prepare the separate GPU runtime
-python -m autoosu --download                          # fetch the models once (~320 MB)
-python -m autoosu                                     # open the window
-python -m autoosu "song.mp3" -d Hard Insane -o out    # command line
-```
+| Stage | How |
+| --- | --- |
+| Timing | Beat This! neural beat tracking + a BPM/phase search that puts the song's attacks on the 1/4 grid; tempo changes, multiple red lines, integer BPMs, red lines on downbeats; written with the 24 ms convention measured on ranked maps |
+| Sync (hard constraint) | every note on the grid with a distinct attack within ±8 ms; no straight/triplet mix inside a beat; `verify_chart` re-checks every chart and nothing failing is written |
+| Notes | a beat-grid TCN conditioned on star rating, learned from 300 ranked 4K sets: where notes go, chord sizes, long notes |
+| Patterns | a lane-pattern model learned from 1.5 M ranked rows, decoded under hard constraints (held lanes, minimum jack interval) |
+| Difficulty | bisected with osu!'s star-rating algorithm (rosu-pp); OD/HP and chord share from ranked charts of the same star range; difficulties a song cannot support are skipped, not padded |
 
-Python 3.10 or newer. This is also how to run it on macOS / Linux; the exe is Windows only.
+## Quality (v1, 22 unseen songs / 67 ranked charts)
 
-## Quality and limits
+| | old rules engine | v1 | ranked |
+| --- | --- | --- | --- |
+| notes on the human chart's grid | 95.8 % | **98.4 %** | |
+| passing sync/playability checks | 61 % | **100 %** | |
+| star-rating error | 1.44★ | **0.21★** | |
+| notes/s / chord rows | 3.5 / 9.9 % | **8.6 / 35.1 %** | 9.2 / 35.6 % |
+| timing matches human red lines (218 single-BPM songs) | 77.9 % | **93.5 %** | |
 
-- **The rhythm sits on the drums.** On the validation set the rhythm model reaches an onset F1 of 0.96 against the human map; two human difficulties of the same song agree at only 0.74.
-- **Placement looks human.** The coordinate model generates coordinates from pure noise; jumps, streams and slider shapes are learned. Every slider is fitted so it stays on screen.
-- **What is still missing.** One red line per song; slider length is not a model input yet, so long sliders on fast songs are occasionally shortened (a green line keeps the timing right);
-  hitsounds are simple drum-based whistle / clap / finish; no storyboard. Check the map in the editor before submitting it anywhere.
-- **mania 4K uses the ranked-calibrated engine.** Timing is validated against the human red lines of ranked maps and supports tempo changes and multiple red lines; notes and lane patterns are learned from ranked 4K charts and star ratings are calibrated with osu!'s algorithm; every chart is checked for grid, attack and playability before it is written (method and results: [docs/mania4k_engine.md](docs/mania4k_engine.md)). Not done: SV effects, keysounds, deliberately designed mapper-style climaxes; live recordings with continuously drifting tempo fall back to one red line per beat. Look through the map in the editor before sharing it.
+## Iterations
 
-## How it works
+- **v1**: exact timing, sync as a hard constraint, star calibration. Human review 70/100: sync and difficulty right, but patterns monotonous (almost all streams), weak sections, no emotional arc.
+- **v2 (in progress)**: learn from ranked charts how sections, musical intensity and pattern types (jacks, streams, chords, ...) relate, and plan patterns and intensity per section.
 
-![architecture](docs/architecture.png)
+Known limits: live recordings with drifting tempo, swing/jazz and tournament tracks with many tempo changes; no SV or keysounds.
 
-**Analysis and timing (rules).** Harmonic / percussive split, onset envelopes per drum band (kick / snare / hat); tempogram BPM with octave correction;
-1 ms offset refinement on the waveform; downbeats from kicks, chord changes and loudness; loudness sections → kiai.
-Objects are written 26 ms before the audio transient, the convention of ranked maps that players calibrate their offset against.
+## Reproduce
 
-**mania 4K (rules).** It reuses audio analysis, timing, metadata, cover art and `.osz` packaging. Each difficulty selects notes from the rhythm grid, then seeded rules assign four lanes with hand alternation and fewer jacks. Strong beats can become controlled two- or three-note chords; sustained sounds can become quantised long notes. A lane occupied by a long note cannot receive another object. Files explicitly contain `Mode:3` and `CircleSize:4`.
+Corpus, training and evaluation scripts are `scripts/mania4k_*.py`; method and data in [docs/mania4k_engine.md](docs/mania4k_engine.md).
 
-**Rhythm model** `rhythm_v0.pt`, about 29 M parameters. A bidirectional transformer on a 1/4-beat grid: each tick sees ±80 ms of mel spectrogram,
-its position in the bar, local loudness, plus the requested star rating / CS / AR / OD / HP, and predicts one of six classes
-(none / circle / slider head / body / end / spinner), decoded MaskGIT-style in 12 parallel rounds.
-
-**Coordinate model** `coord_v0.pt`, about 130 M parameters. The DiT-B architecture from [osu-diffusion](https://github.com/OliBomby/osu-diffusion),
-trained from scratch here on the full 1000-step noise schedule. Input is the object token sequence (circles, slider heads, anchors, slider ends, spinners, each with its time);
-it denoises x / y for every point from pure noise. The only conditions are star rating and CS; half of the training samples had the "distance to the previous point" zeroed, so it chooses its own spacing.
-
-**Slider fitting.** The model draws the shape, the rhythm dictates the length: each slider is scaled about its head to the required length; if it would leave the field it is mirrored, then rotated,
-and only as a last resort shortened with a local green line. Fast songs get a lower SliderMultiplier.
-
-### Training record
-
-![training curves](docs/training_curves.png)
-
-| Model | Data | Hardware | Steps | Wall time | Result |
-| --- | --- | --- | --- | --- | --- |
-| Rhythm, masked v0 | 139,582 osu!standard beatmaps ([project-riz/osu-beatmaps](https://huggingface.co/datasets/project-riz/osu-beatmaps)) | 2 × RTX 5880 Ada | 60k, batch 128 | 4.5 h | step 40k used: generated-onset F1 0.963, density error 0.10 |
-| Coordinates, DiT-B v0 | 140,018 maps of the same corpus (ORS layout) | 2 × RTX 5880 Ada | 200k, batch 128 | 8.5 h | final loss 0.125; 0 % out of bounds; layouts at 50k / 100k / 200k nearly identical for one seed |
-
-An autoregressive rhythm model was trained too; causal attention could not hear the upcoming audio and it liked to hide behind spinners, so the masked version won.
-The full log, failed routes included, is in [docs/rhythm_model_design.md](docs/rhythm_model_design.md) (Chinese);
-wandb projects: [autoosu-rhythm](https://wandb.ai/kanzei/autoosu-rhythm), [autoosu-coords](https://wandb.ai/kanzei/autoosu-coords).
-
-## Train it yourself / build the exe
-
-Everything used for training is in the repo: `autoosu/ml/prepare_data.py` (HF shards → features and labels), `autoosu/ml/train.py` (rhythm model, `torchrun` multi-GPU),
-`coord/` + `scripts/coord_make_ors.py` (coordinate model, accelerate), `scripts/server_*.sh` (server workflow), `scripts/coord_export.py` (export to release files).
-Both model files load with `torch.load(weights_only=True)`, no pickled code.
-
-Building the exe:
-
-```powershell
-pip install -e .[build]
-powershell -ExecutionPolicy Bypass -File scripts/build_exe.ps1            # dist/AUTO-OSU-<version>-win64-cpu.zip
-```
-
-A venv with a CUDA torch plus `-Venv .venv-gpu -Suffix cuda` gives the GPU build. `python scripts/make_icon.py avatar.png` creates the window avatar and exe icon.
-
-## FAQ
-
-**Model download fails?** Download `rhythm_v0.pt` and `coord_v0.pt` from [models-v0](https://github.com/kanze1/AUTO-OSU/releases/tag/models-v0) by hand
-and put them into the `models/` folder next to the exe (or `~/.autoosu/models/`).
-
-**Antivirus complains?** PyInstaller bundles are often flagged. Run it the Python way, or build it yourself with the steps above.
-
-**BPM or offset wrong?** Set them in Advanced options. Songs with tempo changes currently get a single red line.
-
-**osu! did not open?** `.osz` is not associated with osu! on your system; drag the generated `.osz` onto the osu! window.
-
-**Too slow?** About a minute per difficulty on CPU is normal; "fast" placement quality halves it; with an NVIDIA GPU click **Set up GPU acceleration** in the window.
-
-**A format will not decode?** Make sure the file plays at all; the program tries libsndfile, then the bundled ffmpeg, and reports the exact reason if both fail.
-
-## Roadmap
-
-- Coordinate model v1: required slider length as a per-point condition, ending shortened long sliders for good.
-- Rhythm model: mapper-style condition, 1/12 grid for triplets.
-- Several seeds per song to pick from; multiple red lines for tempo changes.
-
-## Licence and attribution
-
-Code and models are released under **MIT plus an attribution condition** (see [LICENSE](LICENSE)):
-
-- Personal use, learning, playing around in the community: keep the copyright notice, exactly like plain MIT.
-- **Commercial use or large-scale deployment** (a public web service, an app distributed to the general public, bulk generation for a platform or community):
-  show **AUTO-OSU by kanzei** with a link to this repository, https://github.com/kanze1/AUTO-OSU, prominently in the product's interface, about page, store page or documentation.
-
-Generated beatmaps are yours; the songs belong to their artists.
-
-## Acknowledgements
-
-- [osu-diffusion](https://github.com/OliBomby/osu-diffusion) (MIT) — DiT architecture and diffusion code, vendored in `autoosu/ml/coord`.
-- [Mapperatorinator](https://github.com/OliBomby/Mapperatorinator) (MIT) — tokenisation ideas and the baseline we compared against.
-- [project-riz/osu-beatmaps](https://huggingface.co/datasets/project-riz/osu-beatmaps) — the training corpus.
-- [osu-dreamer](https://github.com/jaswon/osu-dreamer) — an earlier baseline.
-- [Noto Sans SC](https://fonts.google.com/noto/specimen/Noto+Sans+SC) (OFL) — the interface font, bundled as AUTO-OSU Sans.
-
-Author: kanzei
+License: MIT with an attribution condition, see [LICENSE](LICENSE).
